@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Standard
+from enum import Enum
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -11,7 +12,7 @@ import time
 
 # Third Party
 # instructlab - All of these need to go away (other than sdg) - issue #6
-from datasets import Dataset
+from datasets import concatenate_datasets, Dataset
 import httpx
 import openai
 import platformdirs
@@ -26,13 +27,22 @@ from instructlab.sdg.pipeline import (
     PipelineContext,
 )
 from instructlab.sdg.sdg import SDG
-from instructlab.sdg.utils import GenerateException, models
+from instructlab.sdg.utils import (
+    GenerateException,
+    datamixing,
+    models,
+)
 from instructlab.sdg.utils.taxonomy import (
     leaf_node_to_samples,
     read_taxonomy_leaf_nodes,
 )
 
 _SYS_PROMPT = "You are an AI language model developed by IBM Research. You are a cautious assistant. You carefully follow instructions. You are helpful and harmless and you follow ethical guidelines and promote positive behavior."
+
+
+class TaxonomyType(Enum):
+    KNOWLEDGE = "knowledge"
+    SKILL = "skill"
 
 
 def _unescape(s):
@@ -265,6 +275,7 @@ def generate_data(
     tls_client_passwd: Optional[str] = None,
     pipeline: Optional[str] = "simple",
     batch_size: Optional[int] = None,
+    configs_dir: Path = Path(os.path.abspath(__file__)) / "configs",
 ) -> None:
     """Generate data for training and testing a model.
 
@@ -339,7 +350,8 @@ def generate_data(
             "Synthesizing new instructions. If you aren't satisfied with the generated instructions, interrupt training (Ctrl-C) and try adjusting your YAML files. Adding more examples may help."
         )
 
-    generated_data = None
+    generated_knowledge = []
+    generated_skills = []
     for leaf_node in leaf_nodes.values():
         samples = leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count)
 
@@ -348,22 +360,22 @@ def generate_data(
 
         if samples[0].get("document"):
             sdg = sdg_knowledge
-        elif samples[0].get("seed_context"):
+            generated_data = generated_knowledge
+        elif samples[0].get("context"):
             sdg = sdg_grounded_skill
+            generated_data = generated_skills
         else:
             sdg = sdg_freeform_skill
+            generated_data = generated_skills
 
         logger.debug("Samples: %s" % samples)
         ds = Dataset.from_list(samples)
         logger.debug("Dataset: %s" % ds)
         new_generated_data = sdg.generate(ds)
-        generated_data = (
-            [new_generated_data]
-            if generated_data is None
-            else generated_data + [new_generated_data]
-        )
-        logger.info("Generated %d samples" % len(generated_data))
-        logger.debug("Generated data: %s" % generated_data)
+        generated_data.append(new_generated_data)
+
+        logger.info("Generated %d samples" % len(new_generated_data))
+        logger.debug("Generated data: %s" % new_generated_data)
 
     if generated_data is None:
         generated_data = []
@@ -383,3 +395,47 @@ def generate_data(
 
     generate_duration = time.time() - generate_start
     logger.info(f"Generation took {generate_duration:.2f}s")
+
+    logger.info("Sampling mixed dataset for training")
+
+    generated_knowledge.to_json(os.path.join(output_dir, "generated_knowledge.jsonl"))
+    generated_skills.to_json(os.path.join(output_dir, "generated_skills.jsonl"))
+
+    knowledge_recipe = datamixing.get_populated_recipe(
+        recipe_path=configs_dir / "data_recipes" / "knowledge" / "default_recipe.yaml",
+        generated_data_path=os.path.join(output_dir, "generated_knowledge.jsonl"),
+        recipe_output_path=os.path.join(output_dir, "knowledge_recipe.yaml"),
+    )
+
+    skills_recipe = datamixing.get_populated_recipe(
+        recipe_path=configs_dir / "data_recipes" / "skills" / "default_recipe.yaml",
+        generated_data_path=os.path.join(output_dir, "generated_skills.jsonl"),
+        recipe_output_path=os.path.join(output_dir, "skills_recipe.yaml"),
+    )
+
+    for recipe in [knowledge_recipe, skills_recipe]:
+        if recipe["sys_prompt"]:
+            sys_prompt = recipe.get("sys_prompt", None).strip()
+
+        if recipe["drop_columns"]:
+            drop_cols = recipe.get("drop_columns", None)
+
+        datasets = []
+        for dataset in recipe["datasets"]:
+            path = dataset["path"]
+            sampling_ratio = dataset["sampling_ratio"]
+            ds = datamixing.load_ds(path, sampling_ratio)
+            datasets.append(ds)
+
+        ds = concatenate_datasets(datasets)
+        ds = ds.map(
+            datamixing.add_system_message,
+            # pylint: disable-next=possibly-used-before-assignment
+            fn_kwargs={"sys_prompt": sys_prompt},
+            num_proc=32,
+        )
+        ds_train, ds_test = datamixing.generate_train_test_splits(ds)
+
+        # pylint: disable-next=possibly-used-before-assignment
+        datamixing.save(ds_train, drop_cols, recipe["save_dir"], f"train_{recipe["save_name"]}")
+        datamixing.save(ds_test, drop_cols, recipe["save_dir"], f"test_{recipe["save_name"]}")
