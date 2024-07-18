@@ -285,7 +285,7 @@ def generate_data(
             # add to 1.0 recipe
         
 
-        generated_data = sdg.generate(ds, cache_dataset_path='~/tmp/cache.jsonl')
+        generated_data = sdg.generate(ds)
 
         if is_knowledge:
             knowledge_phase_data = create_phase07_ds(generated_data)
