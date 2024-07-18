@@ -5,6 +5,7 @@ import pandas as pd
 
 from datasets import Dataset, load_dataset, concatenate_datasets
 from instructlab.sdg.logger_config import setup_logger
+from instructlab.sdg.utils.parse_and_convert import _convert_messages_to_legacy
 
 
 LOGGER = setup_logger(__name__)
@@ -79,17 +80,8 @@ class Recipe:
     def _load_recipe(self):
         with open(self.recipe_path, encoding="utf-8") as fp:
             return yaml.safe_load(fp)
-    
-    def add_dataset(self, path, sampling_size=1.0):
-        self.dataset_added = True
-        self.recipe["datasets"].append({"path": path, 
-                                        "sampling_size": sampling_size})
-    
-    def save_recipe(self, output_path):
-        with open(output_path, "w", encoding="utf-8") as fp:
-            yaml.dump(self.recipe, fp)
 
-    def save_mixed_dataset(self, output_path):
+    def _create_mixed_dataset(self):
         if not self.dataset_added:
             LOGGER.error("No dataset added to the recipe")
             
@@ -103,6 +95,27 @@ class Recipe:
 
         # assert that the dataset only has the allowed columns
         assert set(mixed_ds.column_names) == set(ALLOWED_COLS), "Dataset has invalid columns"
+        return mixed_ds
 
+    def add_dataset(self, path, sampling_size=1.0):
+        self.dataset_added = True
+        self.recipe["datasets"].append({"path": path,
+                                        "sampling_size": sampling_size})
+
+    def save_recipe(self, output_path):
+        with open(output_path, "w", encoding="utf-8") as fp:
+            yaml.dump(self.recipe, fp)
+
+    def save_mixed_dataset(self, output_path):
+        mixed_ds = self._create_mixed_dataset()
         mixed_ds.to_json(output_path, orient="records", lines=True)
         LOGGER.info(f"Mixed Dataset saved to {output_path}")
+
+
+    def save_legacy_dataset(self, output_path):
+        mixed_ds = self._create_mixed_dataset()
+        legacy_ds = mixed_ds.map(_convert_messages_to_legacy,
+                                 num_proc=8)
+        legacy_ds = legacy_ds.remove_columns(["messages", "metadata"])
+        legacy_ds.to_json(output_path, orient="records", lines=True)
+        LOGGER.info(f"Legacy format Mixed Dataset saved to {output_path}")

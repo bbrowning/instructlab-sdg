@@ -52,6 +52,33 @@ logger = setup_logger(__name__)
 NUM_SYNTH_SKILLS = 30
 
 
+def _gen_test_data(
+    leaf_nodes,
+    sys_prompt,
+    output_file_test,
+):
+    test_data = []
+    for _, leaf_node in leaf_nodes.items():
+        for seed_example in leaf_node:
+            user = seed_example["instruction"]  # question
+
+            if len(seed_example["input"]) > 0:
+                user += "\n" + seed_example["input"]  # context
+
+            test_data.append(
+                {
+                    "system": sys_prompt,
+                    "user": _unescape(user),
+                    "assistant": _unescape(seed_example["output"]),  # answer
+                }
+            )
+
+    with open(output_file_test, "w", encoding="utf-8") as outfile:
+        for entry in test_data:
+            json.dump(entry, outfile, ensure_ascii=False)
+            outfile.write("\n")
+
+
 def _check_pipeline_dir(pipeline):
     for file in ["knowledge.yaml", "freeform_skills.yaml", "grounded_skills.yaml"]:
         if not os.path.exists(os.path.join(pipeline, file)):
@@ -221,8 +248,13 @@ def generate_data(
     date_suffix = datetime.now().replace(microsecond=0).isoformat().replace(":", "_")
     output_file_train = f"train_{name}_{date_suffix}.jsonl"
 
-    # this file needs to be revisted later - retaining for now
+    # Generate the test jsonl file needed by legacy training
     output_file_test = f"test_{name}_{date_suffix}.jsonl"
+    _gen_test_data(
+        leaf_nodes,
+        sys_prompt,
+        os.path.join(output_dir, output_file_test),
+    )
     
     #TODO: AB change this to handle new knowledge
     # taxonomy_ds = get_taxonomy_data(leaf_nodes, sys_prompt=sys_prompt)
@@ -316,5 +348,6 @@ def generate_data(
     if skills_recipe.dataset_added:
         skills_recipe.save_recipe(f"{output_dir}/skills_recipe_{date_suffix}.yaml")
         skills_recipe.save_mixed_dataset(f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl")
+        skills_recipe.save_legacy_dataset(f"{output_dir}/train_{date_suffix}.jsonl")
 
     logger.info(f"Generation complete in {time.time() - generate_start:.2f}s")

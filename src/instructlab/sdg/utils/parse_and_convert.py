@@ -62,6 +62,22 @@ def _get_response(synth_example: dict):
 
 
 
+def _convert_messages_to_legacy(sample: dict):
+    """
+    Convert new format messages to the legacy format 'system', 'user', and
+    'assistant' columns.
+
+    Note: We should remove this function in the future when standardize the
+    format to messages.
+    """
+    if len(sample["messages"]) < 3:
+        raise utils.GenerateException("Generated message cannot be converted to legacy format")
+    sample["system"] = _unescape(sample["messages"][0]["content"])
+    sample["user"] = _unescape(sample["messages"][1]["content"])
+    sample["assistant"] = _unescape(sample["messages"][2]["content"])
+
+    return sample
+
 def _convert_to_hack_fmt(sample: dict, sys_prompt: str):
     """
     Convert a sample dictionary to contain 'system', 'user', and 'assistant' columns.
