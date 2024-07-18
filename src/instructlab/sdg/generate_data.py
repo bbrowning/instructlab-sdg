@@ -258,9 +258,8 @@ def generate_data(
             "Synthesizing new instructions. If you aren't satisfied with the generated instructions, interrupt training (Ctrl-C) and try adjusting your YAML files. Adding more examples may help."
         )
 
-    is_knowledge = False
-
     for i, leaf_node in enumerate(leaf_nodes.values()):
+        is_knowledge = False
         samples = leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count)
         ds = Dataset.from_list(samples)
 
