@@ -135,8 +135,8 @@ def create_auxiliary_dataset(generated_dataset: Dataset):
 def generate_knowledge_qa_dataset(generated_dataset: Dataset, keep_context_separate=False):
     def __create_qa_row(rec):
         context = rec["document"]
-        instruction = rec["question"]
-        response = rec["response"]
+        instruction = _get_question(rec)
+        response = _get_response(rec)
         metadata = {
             "sdg_document": rec["document"],
             "domain": rec["domain"],
@@ -164,8 +164,16 @@ def build_raft_dataset(ds: Dataset, p, num_doc_in_context=4):
     all_context = [" ".join(e.split(" ")[:random.randint(100, 500)]) for e in all_context]
     ds = ds.add_column("row_idx", range(ds.num_rows))
     def __pick_documents(rec, p):
+        # Loop until we find enough other documents to add to the context
+        # for this document. Exit the loop early if we have fewer total
+        # documents than the number of documents we want in our context
+        # so that we don't end up looping forever. This handles edge
+        # cases where the number of generated instructions is very low,
+        # like in CI or user's testing small sizes.
         while True:
             selected_docs = random.choices(range(ds.num_rows), k=num_doc_in_context)
+            if ds.num_rows <= num_doc_in_context:
+                break
             if rec["row_idx"] not in selected_docs:
                 break
         if random.uniform(0, 1) < p:
