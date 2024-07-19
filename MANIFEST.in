@@ -1,2 +1,2 @@
-exclude instructlab/sdg/configs/data_recipes/knowledge/default_recipt.yaml
-exclude instructlab/sdg/configs/data_recipes/skills/default_recipt.yaml
+exclude instructlab/sdg/configs/knowledge/data_recipe/default_recipe.yaml
+exclude instructlab/sdg/configs/skills/data_recipe/default_recipe.yaml
