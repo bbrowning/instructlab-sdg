@@ -1,12 +1,13 @@
+# Standard
 import json
+
+# Third Party
+from datasets import Dataset, concatenate_datasets, load_dataset
 import yaml
 
-import pandas as pd
-
-from datasets import Dataset, load_dataset, concatenate_datasets
+# First Party
 from instructlab.sdg.logger_config import setup_logger
 from instructlab.sdg.utils.parse_and_convert import _convert_messages_to_legacy
-
 
 LOGGER = setup_logger(__name__)
 ALLOWED_COLS = ["id", "messages", "metadata"]
@@ -49,8 +50,7 @@ def load_ds(path, sampling_size):
     # check if metadata column is string if not convert it using json.dumps
     if not isinstance(dataset["metadata"][0], str):
         dataset = dataset.map(
-            lambda x: {"metadata": json.dumps(x["metadata"])}, 
-            num_proc=8
+            lambda x: {"metadata": json.dumps(x["metadata"])}, num_proc=8
         )
 
     return dataset
@@ -76,7 +76,7 @@ class Recipe:
         self.recipe = self._load_recipe()
         self.sys_prompt = self.recipe.get("sys_prompt", "")
         self.dataset_added = False
-    
+
     def _load_recipe(self):
         with open(self.recipe_path, encoding="utf-8") as fp:
             return yaml.safe_load(fp)
@@ -84,23 +84,26 @@ class Recipe:
     def _create_mixed_dataset(self):
         if not self.dataset_added:
             LOGGER.error("No dataset added to the recipe")
-            
-        mixed_ds = [load_ds(dataset["path"], dataset["sampling_size"])
-                    for dataset in self.recipe["datasets"]]
-        
+
+        mixed_ds = [
+            load_ds(dataset["path"], dataset["sampling_size"])
+            for dataset in self.recipe["datasets"]
+        ]
+
         mixed_ds = concatenate_datasets(mixed_ds)
-        mixed_ds = mixed_ds.map(add_system_message, 
-                                fn_kwargs={"sys_prompt": self.sys_prompt}, 
-                                num_proc=8)
+        mixed_ds = mixed_ds.map(
+            add_system_message, fn_kwargs={"sys_prompt": self.sys_prompt}, num_proc=8
+        )
 
         # assert that the dataset only has the allowed columns
-        assert set(mixed_ds.column_names) == set(ALLOWED_COLS), "Dataset has invalid columns"
+        assert set(mixed_ds.column_names) == set(
+            ALLOWED_COLS
+        ), "Dataset has invalid columns"
         return mixed_ds
 
     def add_dataset(self, path, sampling_size=1.0):
         self.dataset_added = True
-        self.recipe["datasets"].append({"path": path,
-                                        "sampling_size": sampling_size})
+        self.recipe["datasets"].append({"path": path, "sampling_size": sampling_size})
 
     def save_recipe(self, output_path):
         with open(output_path, "w", encoding="utf-8") as fp:
@@ -111,11 +114,9 @@ class Recipe:
         mixed_ds.to_json(output_path, orient="records", lines=True)
         LOGGER.info(f"Mixed Dataset saved to {output_path}")
 
-
     def save_legacy_dataset(self, output_path):
         mixed_ds = self._create_mixed_dataset()
-        legacy_ds = mixed_ds.map(_convert_messages_to_legacy,
-                                 num_proc=8)
+        legacy_ds = mixed_ds.map(_convert_messages_to_legacy, num_proc=8)
         legacy_ds = legacy_ds.remove_columns(["messages", "metadata"])
         legacy_ds.to_json(output_path, orient="records", lines=True)
         LOGGER.info(f"Legacy format Mixed Dataset saved to {output_path}")

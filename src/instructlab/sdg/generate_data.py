@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Standard
-from enum import Enum
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -12,7 +11,7 @@ import time
 
 # Third Party
 # instructlab - All of these need to go away (other than sdg) - issue #6
-from datasets import concatenate_datasets, Dataset
+from datasets import Dataset
 import httpx
 import openai
 import platformdirs
@@ -27,28 +26,20 @@ from instructlab.sdg.pipeline import (
     PipelineContext,
 )
 from instructlab.sdg.sdg import SDG
-from instructlab.sdg.utils import (
-    GenerateException,
-    models,
+from instructlab.sdg.utils import GenerateException, models
+from instructlab.sdg.utils.datamixing import Recipe
+from instructlab.sdg.utils.parse_and_convert import (
+    _convert_to_messages,
+    _unescape,
+    create_phase07_ds,
+    create_phase10_ds,
 )
 from instructlab.sdg.utils.taxonomy import (
     leaf_node_to_samples,
     read_taxonomy_leaf_nodes,
 )
-from instructlab.sdg.utils.parse_and_convert import (
-    _unescape,
-    _convert_to_messages,
-    _convert_to_hack_fmt,
-    create_phase07_ds,
-    create_phase10_ds
-)
-from instructlab.sdg.utils.datamixing import (
-    Recipe,
-)
-from instructlab.sdg.logger_config import setup_logger
 
 # Constants
-logger = setup_logger(__name__)
 NUM_SYNTH_SKILLS = 30
 
 
@@ -217,19 +208,24 @@ def generate_data(
                   We expect three files to be present in this directory: "knowledge.yaml",
                     "freeform_skills.yaml", and "grounded_skills.yaml".
     """
-    logger = setup_logger(__name__)
     generate_start = time.time()
 
     # FIXME: remove this when ilab knows to pass batch_size=0 with llama.cpp
     if batch_size is None:
         batch_size = 0
 
-    knowledge_recipe = Recipe("src/instructlab/sdg/configs/knowledge/data_recipe/default_recipe.yaml")
-    skills_recipe = Recipe("src/instructlab/sdg/configs/skills/data_recipe/default_recipe.yaml")
+    knowledge_recipe = Recipe(
+        "src/instructlab/sdg/configs/knowledge/data_recipe/default_recipe.yaml"
+    )
+    skills_recipe = Recipe(
+        "src/instructlab/sdg/configs/skills/data_recipe/default_recipe.yaml"
+    )
 
-    sys_prompt = knowledge_recipe.sys_prompt    
+    sys_prompt = knowledge_recipe.sys_prompt
     logger.info(f"System prompt: {sys_prompt}")
-    assert sys_prompt == skills_recipe.sys_prompt, "System prompts must be the same for both knowledge and skills"
+    assert (
+        sys_prompt == skills_recipe.sys_prompt
+    ), "System prompts must be the same for both knowledge and skills"
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -255,8 +251,8 @@ def generate_data(
         sys_prompt,
         os.path.join(output_dir, output_file_test),
     )
-    
-    #TODO: AB change this to handle new knowledge
+
+    # TODO: AB change this to handle new knowledge
     # taxonomy_ds = get_taxonomy_data(leaf_nodes, sys_prompt=sys_prompt)
     # logger.info(f"Generating to: {os.path.join(output_dir, output_file_test)}")
     # taxonomy_ds.to_json(os.path.join(output_dir, output_file_test))
@@ -307,26 +303,33 @@ def generate_data(
 
         elif samples[0].get("seed_context"):
             sdg = sdg_grounded_skill
-            logger.info(f"Generating data for leaf node {i} with grounded skill pipeline.")
+            logger.info(
+                f"Generating data for leaf node {i} with grounded skill pipeline."
+            )
             # add to 1.0 recipe
 
         else:
             sdg = sdg_freeform_skill
-            logger.info(f"Generating data for leaf node {i} with freeform skill pipeline.")
+            logger.info(
+                f"Generating data for leaf node {i} with freeform skill pipeline."
+            )
             # add to 1.0 recipe
-        
 
         generated_data = sdg.generate(ds)
 
         if is_knowledge:
             knowledge_phase_data = create_phase07_ds(generated_data)
             skills_phase_data = create_phase10_ds(generated_data)
-            
-            knowledge_fpath = os.path.join(output_dir, f"node_datasets_{date_suffix}/node_{i}_p07.jsonl")
-            skills_fpath = os.path.join(output_dir, f"node_datasets_{date_suffix}/node_{i}_p10.jsonl")
+
+            knowledge_fpath = os.path.join(
+                output_dir, f"node_datasets_{date_suffix}/node_{i}_p07.jsonl"
+            )
+            skills_fpath = os.path.join(
+                output_dir, f"node_datasets_{date_suffix}/node_{i}_p10.jsonl"
+            )
             knowledge_phase_data.to_json(knowledge_fpath, orient="records", lines=True)
             skills_phase_data.to_json(skills_fpath, orient="records", lines=True)
-            
+
             knowledge_recipe.add_dataset(knowledge_fpath)
             skills_recipe.add_dataset(skills_fpath)
         else:
@@ -336,18 +339,25 @@ def generate_data(
                 num_proc=8,
             )
 
-            fpath = os.path.join(output_dir, f"node_datasets_{date_suffix}/node_{i}.jsonl")
+            fpath = os.path.join(
+                output_dir, f"node_datasets_{date_suffix}/node_{i}.jsonl"
+            )
             messages.to_json(fpath, orient="records", lines=True)
             skills_recipe.add_dataset(fpath, NUM_SYNTH_SKILLS)
-    
 
     if knowledge_recipe.dataset_added:
-        knowledge_recipe.save_recipe(f"{output_dir}/knowledge_recipe_{date_suffix}.yaml")
-        knowledge_recipe.save_mixed_dataset(f"{output_dir}/knowledge_train_msgs_{date_suffix}.jsonl")
-                                                                                 
+        knowledge_recipe.save_recipe(
+            f"{output_dir}/knowledge_recipe_{date_suffix}.yaml"
+        )
+        knowledge_recipe.save_mixed_dataset(
+            f"{output_dir}/knowledge_train_msgs_{date_suffix}.jsonl"
+        )
+
     if skills_recipe.dataset_added:
         skills_recipe.save_recipe(f"{output_dir}/skills_recipe_{date_suffix}.yaml")
-        skills_recipe.save_mixed_dataset(f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl")
-        skills_recipe.save_legacy_dataset(f"{output_dir}/train_{date_suffix}.jsonl")
+        skills_recipe.save_mixed_dataset(
+            f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl"
+        )
+        skills_recipe.save_legacy_dataset(f"{output_dir}/{output_file_train}")
 
     logger.info(f"Generation complete in {time.time() - generate_start:.2f}s")
