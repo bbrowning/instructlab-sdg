@@ -139,6 +139,7 @@ def _sdg_init(
         SDG([load_pipeline("knowledge.yaml")]),
         SDG([load_pipeline("freeform_skills.yaml")]),
         SDG([load_pipeline("grounded_skills.yaml")]),
+        ctx,
     )
 
 
@@ -271,7 +272,7 @@ def generate_data(
     else:
         model_family = MODEL_FAMILY_MERLINITE
 
-    sdg_knowledge, sdg_freeform_skill, sdg_grounded_skill = _sdg_init(
+    sdg_knowledge, sdg_freeform_skill, sdg_grounded_skill, pipeline_ctx = _sdg_init(
         pipeline,
         client,
         model_family,
@@ -336,7 +337,7 @@ def generate_data(
             messages = generated_data.map(
                 _convert_to_messages,
                 fn_kwargs={"sys_prompt": sys_prompt},
-                num_proc=8,
+                num_proc=pipeline_ctx.num_procs,
             )
 
             fpath = os.path.join(
@@ -350,14 +351,18 @@ def generate_data(
             f"{output_dir}/knowledge_recipe_{date_suffix}.yaml"
         )
         knowledge_recipe.save_mixed_dataset(
-            f"{output_dir}/knowledge_train_msgs_{date_suffix}.jsonl"
+            f"{output_dir}/knowledge_train_msgs_{date_suffix}.jsonl",
+            pipeline_ctx.num_procs,
         )
 
     if skills_recipe.dataset_added:
         skills_recipe.save_recipe(f"{output_dir}/skills_recipe_{date_suffix}.yaml")
         skills_recipe.save_mixed_dataset(
-            f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl"
+            f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl",
+            pipeline_ctx.num_procs,
         )
-        skills_recipe.save_legacy_dataset(f"{output_dir}/{output_file_train}")
+        skills_recipe.save_legacy_dataset(
+            f"{output_dir}/{output_file_train}", pipeline_ctx.num_procs
+        )
 
     logger.info(f"Generation complete in {time.time() - generate_start:.2f}s")

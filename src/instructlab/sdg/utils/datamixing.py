@@ -20,7 +20,7 @@ def adjust_train_sample_size(ds: Dataset, num_samples: int):
     return Dataset.from_pandas(df)
 
 
-def load_ds(path, sampling_size):
+def load_ds(path, sampling_size, num_proc):
     LOGGER.info(f"Loading dataset from {path} ...")
     dataset = load_dataset("json", data_files=path, split="train")
     LOGGER.info(f"Dataset columns: {dataset.column_names}")
@@ -45,12 +45,12 @@ def load_ds(path, sampling_size):
         example["metadata"] = json.dumps(metadata)
         return example
 
-    dataset = dataset.map(move_unallowed_cols_to_metadata, num_proc=8)
+    dataset = dataset.map(move_unallowed_cols_to_metadata, num_proc=num_proc)
 
     # check if metadata column is string if not convert it using json.dumps
     if not isinstance(dataset["metadata"][0], str):
         dataset = dataset.map(
-            lambda x: {"metadata": json.dumps(x["metadata"])}, num_proc=8
+            lambda x: {"metadata": json.dumps(x["metadata"])}, num_proc=num_proc
         )
 
     return dataset
@@ -81,18 +81,20 @@ class Recipe:
         with open(self.recipe_path, encoding="utf-8") as fp:
             return yaml.safe_load(fp)
 
-    def _create_mixed_dataset(self):
+    def _create_mixed_dataset(self, num_proc):
         if not self.dataset_added:
             LOGGER.error("No dataset added to the recipe")
 
         mixed_ds = [
-            load_ds(dataset["path"], dataset["sampling_size"])
+            load_ds(dataset["path"], dataset["sampling_size"], num_proc)
             for dataset in self.recipe["datasets"]
         ]
 
         mixed_ds = concatenate_datasets(mixed_ds)
         mixed_ds = mixed_ds.map(
-            add_system_message, fn_kwargs={"sys_prompt": self.sys_prompt}, num_proc=8
+            add_system_message,
+            fn_kwargs={"sys_prompt": self.sys_prompt},
+            num_proc=num_proc,
         )
 
         # assert that the dataset only has the allowed columns
@@ -109,14 +111,14 @@ class Recipe:
         with open(output_path, "w", encoding="utf-8") as fp:
             yaml.dump(self.recipe, fp)
 
-    def save_mixed_dataset(self, output_path):
-        mixed_ds = self._create_mixed_dataset()
+    def save_mixed_dataset(self, output_path, num_proc):
+        mixed_ds = self._create_mixed_dataset(num_proc)
         mixed_ds.to_json(output_path, orient="records", lines=True)
         LOGGER.info(f"Mixed Dataset saved to {output_path}")
 
-    def save_legacy_dataset(self, output_path):
-        mixed_ds = self._create_mixed_dataset()
-        legacy_ds = mixed_ds.map(_convert_messages_to_legacy, num_proc=8)
+    def save_legacy_dataset(self, output_path, num_proc):
+        mixed_ds = self._create_mixed_dataset(num_proc)
+        legacy_ds = mixed_ds.map(_convert_messages_to_legacy, num_proc=num_proc)
         legacy_ds = legacy_ds.remove_columns(["messages", "metadata"])
         legacy_ds.to_json(output_path, orient="records", lines=True)
         LOGGER.info(f"Legacy format Mixed Dataset saved to {output_path}")
