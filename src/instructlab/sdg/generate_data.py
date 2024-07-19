@@ -143,29 +143,6 @@ def _sdg_init(
     )
 
 
-def get_taxonomy_data(
-    leaf_nodes,
-    sys_prompt,
-):
-    taxonomy_data = []
-    for _, leaf_node in leaf_nodes.items():
-        for seed_example in leaf_node:
-            user = seed_example["instruction"]  # question
-
-            if len(seed_example["input"]) > 0:
-                user += "\n" + seed_example["input"]  # context
-
-            taxonomy_data.append(
-                {
-                    "system": sys_prompt,
-                    "user": _unescape(user),
-                    "assistant": _unescape(seed_example["output"]),  # answer
-                }
-            )
-    taxonomy_ds = Dataset.from_list(taxonomy_data)
-    return taxonomy_ds
-
-
 # This is part of the public API, and used by instructlab.
 # TODO - parameter removal needs to be done in sync with a CLI change.
 # pylint: disable=unused-argument
@@ -252,11 +229,6 @@ def generate_data(
         sys_prompt,
         os.path.join(output_dir, output_file_test),
     )
-
-    # TODO: AB change this to handle new knowledge
-    # taxonomy_ds = get_taxonomy_data(leaf_nodes, sys_prompt=sys_prompt)
-    # logger.info(f"Generating to: {os.path.join(output_dir, output_file_test)}")
-    # taxonomy_ds.to_json(os.path.join(output_dir, output_file_test))
 
     orig_cert = (tls_client_cert, tls_client_key, tls_client_passwd)
     cert = tuple(item for item in orig_cert if item)
