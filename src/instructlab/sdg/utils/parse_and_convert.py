@@ -3,13 +3,11 @@
 # Standard
 from enum import Enum
 import json
-import os
 import random
 import uuid
 
 # Third Party
-from datasets import Dataset, concatenate_datasets
-import yaml
+from datasets import Dataset
 
 # First Party
 # pylint: disable=ungrouped-imports
@@ -123,64 +121,6 @@ def _convert_to_messages(sample: dict, sys_prompt: str):
     return sample
 
 
-def create_auxiliary_dataset(generated_dataset: Dataset):
-    if "dataset_type" not in generated_dataset.column_names:
-        return None
-    auxilary_path = "src/instructlab/sdg/config/kowledge/auxilary_instructions.yaml"
-    if os.path.isfile(auxilary_path):
-        with open(auxilary_path, "r", encoding="utf-8") as fp:
-            auxiliary_inst = yaml.safe_load(fp)
-    else:
-        return None
-    auxiliary_ds = generated_dataset.filter(
-        lambda x: x["dataset_type"] != "base_document"
-    )
-    unique_document_auxiliary = auxiliary_ds.to_pandas().drop_duplicates(
-        subset=["document"]
-    )
-    unique_document_auxiliary = Dataset.from_pandas(
-        unique_document_auxiliary
-    ).remove_columns(
-        [
-            col
-            for col in unique_document_auxiliary.column_names
-            if col
-            not in [
-                "raw_document",
-                "document_outline",
-                "domain",
-                "dataset_type",
-                "document",
-            ]
-        ]
-    )
-    print(unique_document_auxiliary)
-    unique_document_auxiliary = unique_document_auxiliary.rename_columns(
-        {"raw_document": "context", "document": "response"}
-    )
-
-    def __create_auxiliary_ds(rec):
-        instruction = random.choice(auxiliary_inst[rec["dataset_type"]])
-        messages = [
-            {"role": "user", "content": f"{rec['context']}\n\n{instruction}"},
-            {"role": "assistant", "content": rec["response"]},
-        ]
-        metadata = json.dumps(
-            {
-                "dataset_type": rec["dataset_type"],
-                "raw_document": rec["context"],
-                "dataset": f"document_{rec['dataset_type']}",
-                "domain": rec["domain"],
-            }
-        )
-        return {"messages": messages, "metadata": metadata, "id": str(uuid.uuid4())}
-
-    unique_document_auxiliary = unique_document_auxiliary.map(
-        __create_auxiliary_ds, remove_columns=unique_document_auxiliary.column_names
-    )
-    return unique_document_auxiliary
-
-
 def generate_knowledge_qa_dataset(
     generated_dataset: Dataset, keep_context_separate=False
 ):
@@ -289,12 +229,7 @@ def create_phase10_ds(generated_dataset: Dataset):
     )
     knowledge_ds = build_raft_dataset(knowledge_ds, p=0.4)
 
-    auxiliary_dataset = create_auxiliary_dataset(generated_dataset)
-    if auxiliary_dataset is not None:
-        phase10 = concatenate_datasets([knowledge_ds, auxiliary_dataset])
-    else:
-        phase10 = knowledge_ds
-    return phase10
+    return knowledge_ds
 
 
 def create_phase07_ds(generated_dataset: Dataset):
@@ -304,10 +239,4 @@ def create_phase07_ds(generated_dataset: Dataset):
     )
     knowledge_ds = knowledge_ds.map(_conv_pretrain)
 
-    auxiliary_dataset = create_auxiliary_dataset(generated_dataset)
-    if auxiliary_dataset is not None:
-        auxiliary_dataset = auxiliary_dataset.map(_conv_pretrain)
-        phase07 = concatenate_datasets([knowledge_ds, auxiliary_dataset])
-    else:
-        phase07 = knowledge_ds
-    return phase07
+    return knowledge_ds
