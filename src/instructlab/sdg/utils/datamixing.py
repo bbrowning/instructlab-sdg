@@ -115,6 +115,9 @@ class Recipe:
     def save_legacy_dataset(self, output_path, num_proc):
         mixed_ds = self._create_mixed_dataset(num_proc)
         legacy_ds = mixed_ds.map(_convert_messages_to_legacy, num_proc=num_proc)
+        # Remove any rows without a user question, which would mean we were
+        # unable to convert them to legacy format
+        legacy_ds = legacy_ds.filter(lambda x: x["user"] != "")
         legacy_ds = legacy_ds.remove_columns(["messages", "metadata"])
         legacy_ds.to_json(output_path, orient="records", lines=True)
         LOGGER.info(f"Legacy format Mixed Dataset saved to {output_path}")

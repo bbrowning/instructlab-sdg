@@ -70,13 +70,24 @@ def _convert_messages_to_legacy(sample: dict):
     Note: We should remove this function in the future when standardize the
     format to messages.
     """
-    if len(sample["messages"]) < 3:
-        raise utils.GenerateException(
-            "Generated message cannot be converted to legacy format"
+    skipSample = False
+    if len(sample["messages"]) >= 2 and sample["messages"][1]["role"] == "pretraining":
+        # TODO: Handle converting pretraining messages to legacy format
+        skipSample = True
+    elif len(sample["messages"]) < 3:
+        logger.warning(
+            f"Cannot convert sample to legacy format as it's missing one or more of system, user, or assistant messages: {sample}"
         )
-    sample["system"] = _unescape(sample["messages"][0]["content"])
-    sample["user"] = _unescape(sample["messages"][1]["content"])
-    sample["assistant"] = _unescape(sample["messages"][2]["content"])
+        skipSample = False
+
+    if skipSample:
+        sample["system"] = ""
+        sample["user"] = ""
+        sample["assistant"] = ""
+    else:
+        sample["system"] = _unescape(sample["messages"][0]["content"])
+        sample["user"] = _unescape(sample["messages"][1]["content"])
+        sample["assistant"] = _unescape(sample["messages"][2]["content"])
 
     return sample
 
