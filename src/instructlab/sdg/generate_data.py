@@ -206,9 +206,6 @@ def generate_data(
         raise GenerateException(f"Error: taxonomy ({taxonomy}) does not exist.")
 
     leaf_nodes = read_taxonomy_leaf_nodes(taxonomy, taxonomy_base, yaml_rules)
-    logger.info(f"Found {len(leaf_nodes)} leaf nodes in the taxonomy.")
-    logger.info(f"Generating data for {list(leaf_nodes.keys())} leaf nodes.")
-
     if not leaf_nodes:
         raise GenerateException("Error: No new leaf nodes found in the taxonomy.")
 
@@ -223,6 +220,8 @@ def generate_data(
         sys_prompt,
         os.path.join(output_dir, output_file_test),
     )
+
+    logger.debug(f"Generating to: {os.path.join(output_dir, output_file_test)}")
 
     orig_cert = (tls_client_cert, tls_client_key, tls_client_passwd)
     cert = tuple(item for item in orig_cert if item)
@@ -256,33 +255,26 @@ def generate_data(
     for i, leaf_node in enumerate(leaf_nodes.values()):
         is_knowledge = False
         samples = leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count)
-        ds = Dataset.from_list(samples)
 
         if not samples:
             raise GenerateException("Error: No samples found in leaf node.")
 
         if samples[0].get("document"):
             sdg = sdg_knowledge
-            logger.info(f"Generating data for leaf node {i} with knowledge pipeline.")
             is_knowledge = True
-            # add to 0.7 recipe
-            # add to 1.0 recipe
 
         elif samples[0].get("seed_context"):
             sdg = sdg_grounded_skill
-            logger.info(
-                f"Generating data for leaf node {i} with grounded skill pipeline."
-            )
-            # add to 1.0 recipe
 
         else:
             sdg = sdg_freeform_skill
-            logger.info(
-                f"Generating data for leaf node {i} with freeform skill pipeline."
-            )
-            # add to 1.0 recipe
 
+        logger.debug("Samples: %s" % samples)
+        ds = Dataset.from_list(samples)
+        logger.debug("Dataset: %s" % ds)
         generated_data = sdg.generate(ds)
+        logger.info("Generated %d samples" % len(generated_data))
+        logger.debug("Generated data: %s" % generated_data)
 
         if is_knowledge:
             knowledge_phase_data = create_phase07_ds(generated_data)
@@ -327,4 +319,5 @@ def generate_data(
             f"{output_dir}/{output_file_train}", pipeline_ctx.num_procs
         )
 
-    logger.info(f"Generation complete in {time.time() - generate_start:.2f}s")
+    generate_duration = time.time() - generate_start
+    logger.info(f"Generation took {generate_duration:.2f}s")
