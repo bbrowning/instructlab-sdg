@@ -92,27 +92,6 @@ def _convert_messages_to_legacy(sample: dict):
     return sample
 
 
-def _convert_to_hack_fmt(sample: dict, sys_prompt: str):
-    """
-    Convert a sample dictionary to contain 'system', 'user', and 'assistant' columns.
-
-    Note: We should remove this function in the future when we resolve this issue and
-    standardize the format to messages.
-    """
-    # Create user query message
-    user_query = _unescape(_get_question(sample))
-    response = _unescape(_get_response(sample))
-    if "context" in sample:
-        user_query = f"{sample['context']}\n\n{user_query}"
-
-    sample["id"] = str(uuid.uuid4())
-    sample["system"] = sys_prompt
-    sample["user"] = user_query
-    sample["assistant"] = response
-
-    return sample
-
-
 def _convert_to_messages(sample: dict, sys_prompt: str):
     """
     Convert a sample dictionary to contain 'messages'
