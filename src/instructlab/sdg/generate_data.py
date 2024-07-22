@@ -48,7 +48,6 @@ NUM_SYNTH_SKILLS = 30
 
 def _gen_test_data(
     leaf_nodes,
-    sys_prompt,
     output_file_test,
 ):
     test_data = []
@@ -61,7 +60,7 @@ def _gen_test_data(
 
             test_data.append(
                 {
-                    "system": sys_prompt,
+                    "system": _SYS_PROMPT,
                     "user": _unescape(user),
                     "assistant": _unescape(seed_example["output"]),  # answer
                 }
@@ -195,9 +194,8 @@ def generate_data(
     if batch_size is None:
         batch_size = 0
 
-    sys_prompt = _SYS_PROMPT
-    knowledge_recipe = Recipe(sys_prompt=sys_prompt)
-    skills_recipe = Recipe(sys_prompt=sys_prompt)
+    knowledge_recipe = Recipe(sys_prompt=_SYS_PROMPT)
+    skills_recipe = Recipe(sys_prompt=_SYS_PROMPT)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -211,13 +209,11 @@ def generate_data(
 
     name = Path(model_name).stem  # Just in case it is a file path
     date_suffix = datetime.now().replace(microsecond=0).isoformat().replace(":", "_")
+    output_file_test = f"test_{name}_{date_suffix}.jsonl"
     output_file_train = f"train_{name}_{date_suffix}.jsonl"
 
-    # Generate the test jsonl file needed by legacy training
-    output_file_test = f"test_{name}_{date_suffix}.jsonl"
     _gen_test_data(
         leaf_nodes,
-        sys_prompt,
         os.path.join(output_dir, output_file_test),
     )
 
@@ -294,7 +290,7 @@ def generate_data(
         else:
             messages = generated_data.map(
                 _convert_to_messages,
-                fn_kwargs={"sys_prompt": sys_prompt},
+                fn_kwargs={"sys_prompt": _SYS_PROMPT},
                 num_proc=pipeline_ctx.num_procs,
             )
 
