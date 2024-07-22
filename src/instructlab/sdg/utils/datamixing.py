@@ -1,9 +1,9 @@
 # Standard
+from typing import Optional
 import json
 
 # Third Party
 from datasets import Dataset, concatenate_datasets, load_dataset
-import yaml
 
 # First Party
 from instructlab.sdg.logger_config import setup_logger
@@ -71,15 +71,15 @@ def add_system_message(sample: dict, sys_prompt: str) -> dict:
 
 
 class Recipe:
-    def __init__(self, recipe_path):
-        self.recipe_path = recipe_path
-        self.recipe = self._load_recipe()
+    def __init__(
+        self, initial_datasets: Optional[list] = None, sys_prompt: Optional[str] = ""
+    ):
+        self.recipe = {
+            "datasets": initial_datasets or [],
+            "sys_prompt": sys_prompt,
+        }
         self.sys_prompt = self.recipe.get("sys_prompt", "")
         self.dataset_added = False
-
-    def _load_recipe(self):
-        with open(self.recipe_path, encoding="utf-8") as fp:
-            return yaml.safe_load(fp)
 
     def _create_mixed_dataset(self, num_proc):
         if not self.dataset_added:
@@ -106,10 +106,6 @@ class Recipe:
     def add_dataset(self, path, sampling_size=1.0):
         self.dataset_added = True
         self.recipe["datasets"].append({"path": path, "sampling_size": sampling_size})
-
-    def save_recipe(self, output_path):
-        with open(output_path, "w", encoding="utf-8") as fp:
-            yaml.dump(self.recipe, fp)
 
     def save_mixed_dataset(self, output_path, num_proc):
         mixed_ds = self._create_mixed_dataset(num_proc)

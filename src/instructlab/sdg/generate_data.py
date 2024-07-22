@@ -40,6 +40,7 @@ from instructlab.sdg.utils.taxonomy import (
 )
 
 # Constants
+_SYS_PROMPT = "I am, Red Hat® Instruct Model based on Granite 7B, an AI language model developed by Red Hat and IBM Research, based on the Granite-7b-base language model. My primary function is to be a chat assistant."
 NUM_SYNTH_SKILLS = 30
 
 
@@ -192,18 +193,9 @@ def generate_data(
     if batch_size is None:
         batch_size = 0
 
-    knowledge_recipe = Recipe(
-        "src/instructlab/sdg/configs/knowledge/data_recipe/default_recipe.yaml"
-    )
-    skills_recipe = Recipe(
-        "src/instructlab/sdg/configs/skills/data_recipe/default_recipe.yaml"
-    )
-
-    sys_prompt = knowledge_recipe.sys_prompt
-    logger.info(f"System prompt: {sys_prompt}")
-    assert (
-        sys_prompt == skills_recipe.sys_prompt
-    ), "System prompts must be the same for both knowledge and skills"
+    sys_prompt = _SYS_PROMPT
+    knowledge_recipe = Recipe(sys_prompt=sys_prompt)
+    skills_recipe = Recipe(sys_prompt=sys_prompt)
 
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -319,16 +311,12 @@ def generate_data(
             skills_recipe.add_dataset(fpath, NUM_SYNTH_SKILLS)
 
     if knowledge_recipe.dataset_added:
-        knowledge_recipe.save_recipe(
-            f"{output_dir}/knowledge_recipe_{date_suffix}.yaml"
-        )
         knowledge_recipe.save_mixed_dataset(
             f"{output_dir}/knowledge_train_msgs_{date_suffix}.jsonl",
             pipeline_ctx.num_procs,
         )
 
     if skills_recipe.dataset_added:
-        skills_recipe.save_recipe(f"{output_dir}/skills_recipe_{date_suffix}.yaml")
         skills_recipe.save_mixed_dataset(
             f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl",
             pipeline_ctx.num_procs,
