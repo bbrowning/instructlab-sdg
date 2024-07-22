@@ -141,7 +141,6 @@ def _sdg_init(
         SDG([load_pipeline("knowledge.yaml")]),
         SDG([load_pipeline("freeform_skills.yaml")]),
         SDG([load_pipeline("grounded_skills.yaml")]),
-        ctx,
     )
 
 
@@ -233,7 +232,7 @@ def generate_data(
     else:
         model_family = MODEL_FAMILY_MERLINITE
 
-    sdg_knowledge, sdg_freeform_skill, sdg_grounded_skill, pipeline_ctx = _sdg_init(
+    sdgs = _sdg_init(
         pipeline,
         client,
         model_family,
@@ -242,6 +241,13 @@ def generate_data(
         batch_size=batch_size,
         batch_num_workers=num_cpus,
     )
+    sdg_knowledge, sdg_freeform_skill, sdg_grounded_skill = sdgs
+    # Get a PipelineContext to use in dataset operations below
+    ctx_list = [pipe.ctx for sdg in sdgs for pipe in sdg.pipelines]
+    assert (
+        len(ctx_list) > 0
+    ), "Programming Error: generate_data called with no SDG Pipelines"
+    pipeline_ctx = ctx_list[0]
 
     if console_output:
         logger.info(
@@ -291,7 +297,7 @@ def generate_data(
             messages = generated_data.map(
                 _convert_to_messages,
                 fn_kwargs={"sys_prompt": _SYS_PROMPT},
-                num_proc=pipeline_ctx.num_procs,
+                num_proc=pipeline_ctx.dataset_num_procs,
             )
 
             fpath = os.path.join(
@@ -303,16 +309,16 @@ def generate_data(
     if knowledge_recipe.dataset_added:
         knowledge_recipe.save_mixed_dataset(
             f"{output_dir}/knowledge_train_msgs_{date_suffix}.jsonl",
-            pipeline_ctx.num_procs,
+            pipeline_ctx.dataset_num_procs,
         )
 
     if skills_recipe.dataset_added:
         skills_recipe.save_mixed_dataset(
             f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl",
-            pipeline_ctx.num_procs,
+            pipeline_ctx.dataset_num_procs,
         )
         skills_recipe.save_legacy_dataset(
-            f"{output_dir}/{output_file_train}", pipeline_ctx.num_procs
+            f"{output_dir}/{output_file_train}", pipeline_ctx.dataset_num_procs
         )
 
     generate_duration = time.time() - generate_start
