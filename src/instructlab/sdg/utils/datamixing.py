@@ -7,24 +7,23 @@ from datasets import Dataset, concatenate_datasets, load_dataset
 
 # First Party
 from instructlab.sdg.logger_config import setup_logger
-from instructlab.sdg.utils.parse_and_convert import _convert_messages_to_legacy
 
-LOGGER = setup_logger(__name__)
 ALLOWED_COLS = ["id", "messages", "metadata"]
+logger = setup_logger(__name__)
 
 
 def adjust_train_sample_size(ds: Dataset, num_samples: int):
-    LOGGER.info(f"Rebalancing dataset to have {num_samples} samples ...")
+    logger.info(f"Rebalancing dataset to have {num_samples} samples ...")
     df = ds.to_pandas()
     df = df.sample(n=num_samples, random_state=42, replace=True).reset_index(drop=True)
     return Dataset.from_pandas(df)
 
 
 def load_ds(path, sampling_size, num_proc):
-    LOGGER.info(f"Loading dataset from {path} ...")
+    logger.info(f"Loading dataset from {path} ...")
     dataset = load_dataset("json", data_files=path, split="train")
-    LOGGER.info(f"Dataset columns: {dataset.column_names}")
-    LOGGER.info(f"Dataset loaded with {len(dataset)} samples")
+    logger.info(f"Dataset columns: {dataset.column_names}")
+    logger.info(f"Dataset loaded with {len(dataset)} samples")
 
     if sampling_size != 1.0:
         if isinstance(sampling_size, int):
@@ -83,7 +82,7 @@ class Recipe:
 
     def _create_mixed_dataset(self, num_proc):
         if not self.dataset_added:
-            LOGGER.error("No dataset added to the recipe")
+            logger.error("No dataset added to the recipe")
 
         mixed_ds = [
             load_ds(dataset["path"], dataset["sampling_size"], num_proc)
@@ -103,21 +102,11 @@ class Recipe:
         ), "Dataset has invalid columns"
         return mixed_ds
 
-    def add_dataset(self, path, sampling_size=1.0):
+    def add_dataset(self, path, sampling_size):
         self.dataset_added = True
         self.recipe["datasets"].append({"path": path, "sampling_size": sampling_size})
 
     def save_mixed_dataset(self, output_path, num_proc):
         mixed_ds = self._create_mixed_dataset(num_proc)
         mixed_ds.to_json(output_path, orient="records", lines=True)
-        LOGGER.info(f"Mixed Dataset saved to {output_path}")
-
-    def save_legacy_dataset(self, output_path, num_proc):
-        mixed_ds = self._create_mixed_dataset(num_proc)
-        legacy_ds = mixed_ds.map(_convert_messages_to_legacy, num_proc=num_proc)
-        # Remove any rows without a user question, which would mean we were
-        # unable to convert them to legacy format
-        legacy_ds = legacy_ds.filter(lambda x: x["user"] != "")
-        legacy_ds = legacy_ds.remove_columns(["messages", "metadata"])
-        legacy_ds.to_json(output_path, orient="records", lines=True)
-        LOGGER.info(f"Legacy format Mixed Dataset saved to {output_path}")
+        logger.info(f"Mixed Dataset saved to {output_path}")

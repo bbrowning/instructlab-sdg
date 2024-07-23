@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Optional
 import json
 import os
+import random
 import time
+import uuid
 
 # Third Party
 # instructlab - All of these need to go away (other than sdg) - issue #6
@@ -28,22 +30,137 @@ from instructlab.sdg.pipeline import (
 from instructlab.sdg.sdg import SDG
 from instructlab.sdg.utils import GenerateException, models
 from instructlab.sdg.utils.datamixing import Recipe
-from instructlab.sdg.utils.parse_and_convert import (
-    _convert_to_messages,
-    _unescape,
-    create_phase07_ds,
-    create_phase10_ds,
-)
 from instructlab.sdg.utils.taxonomy import (
     leaf_node_to_samples,
     read_taxonomy_leaf_nodes,
 )
 
-# Constants
 _SYS_PROMPT = "I am, Red Hat® Instruct Model based on Granite 7B, an AI language model developed by Red Hat and IBM Research, based on the Granite-7b-base language model. My primary function is to be a chat assistant."
 
 # How many samples to pick from each skill when mixing skill datasets
 NUM_SYNTH_SKILLS = 30
+
+
+def _unescape(s):
+    return bytes(s, "utf-8").decode("utf-8").strip()
+
+
+# This is a hack because the simple workflow returns a q/a pair as a single output.
+# We could possibly try to ask for them separately, but it would cost twice the inference
+# API calls. All of this is because the smallest models we use on small environments
+# for testing and demos weren't good enough to follow the strict formatting instructions used
+# in the full pipeline.
+def _get_question(logger, synth_example):
+    if "question" in synth_example:
+        return synth_example["question"]
+
+    if not synth_example.get("output"):
+        raise GenerateException(
+            f"Error: output not found in synth_example: {synth_example}"
+        )
+
+    parts = synth_example["output"].split("?", 1)
+    if len(parts) != 2:
+        logger.warning(f"Failed to split generated q&a: {synth_example['output']}")
+    return parts[0].strip() + "?" if len(parts) == 2 else ""
+
+
+# This is also a hack. See the comment above _get_question.
+def _get_response(logger, synth_example):
+    if "response" in synth_example:
+        return synth_example["response"]
+
+    if "output" not in synth_example:
+        raise GenerateException(
+            f"Error: output not found in synth_example: {synth_example}"
+        )
+
+    parts = synth_example["output"].split("?", 1)
+    if len(parts) != 2:
+        logger.warning(f"Failed to split generated q&a: {synth_example['output']}")
+    return parts[1].strip() if len(parts) == 2 else parts[0].strip()
+
+
+def _convert_to_messages(sample):
+    """
+    Convert a sample dictionary to contain 'messages' and 'metadata' columns required for training.
+    """
+    # Create user query message
+    user_query = sample["inputs"]
+    # TODO: in the future we can remove the combinecolumnsblock and combine them here for simplicity
+    # if "context" in sample:
+    #     user_query = f"{sample['context']}\n\n{sample['inputs']}"
+
+    sample["messages"] = [
+        {"content": user_query, "role": "user"},
+        {"content": sample["targets"], "role": "assistant"},
+    ]
+    metadata = {
+        key: value
+        for key, value in sample.items()
+        if key not in ["messages", "inputs", "targets"]
+    }
+    sample["metadata"] = json.dumps(metadata)
+
+    # keeping required keys for messages training format
+    sample = {"messages": sample["messages"], "metadata": sample["metadata"]}
+
+    return sample
+
+
+def _convert_to_leaf_node_messages(sample: dict, logger, sys_prompt: str):
+    """
+    Convert a sample dictionary to contain a 'messages' column required
+    for training.
+    """
+    user_query = _unescape(_get_question(logger, sample))
+    response = _unescape(_get_response(logger, sample))
+
+    sample["id"] = str(uuid.uuid4())
+    sample["messages"] = [
+        {"content": sys_prompt, "role": "system"},
+        {"content": user_query, "role": "user"},
+        {"content": response, "role": "assistant"},
+    ]
+
+    return sample
+
+
+def _gen_train_data(
+    logger, machine_instruction_data, output_file_train, output_file_messages
+):
+    train_data = []
+    messages_data = []
+
+    for output_dataset in machine_instruction_data:
+        for synth_example in output_dataset:
+            logger.debug(synth_example)
+            user = _get_question(logger, synth_example)
+            if len(synth_example.get("context", "")) > 0:
+                user += "\n" + synth_example["context"]
+            assistant = _unescape(_get_response(logger, synth_example))
+            train_entry = {
+                "system": _SYS_PROMPT,
+                "user": _unescape(user),
+                "assistant": assistant,
+            }
+            train_data.append(train_entry)
+            sample = {
+                "inputs": _unescape(user),
+                "targets": assistant,
+                "system": _SYS_PROMPT,
+            }
+            messages_data.append(_convert_to_messages(sample))
+
+    with open(output_file_train, "w", encoding="utf-8") as outfile:
+        for entry in train_data:
+            json.dump(entry, outfile, ensure_ascii=False)
+            outfile.write("\n")
+
+    with open(output_file_messages, "w", encoding="utf-8") as outfile:
+        for entry in messages_data:
+            json.dump(entry, outfile, ensure_ascii=False)
+            outfile.write("\n")
 
 
 def _gen_test_data(
@@ -70,6 +187,21 @@ def _gen_test_data(
         for entry in test_data:
             json.dump(entry, outfile, ensure_ascii=False)
             outfile.write("\n")
+
+
+def _gen_leaf_node_data(
+    leaf_node_data, recipe, output_file_leaf_node, sampling_size=1.0
+):
+    leaf_node_data.to_json(output_file_leaf_node, orient="records", lines=True)
+    recipe.add_dataset(output_file_leaf_node, sampling_size)
+
+
+def _gen_mixed_data(recipe, output_file_mixed, ctx):
+    if recipe.dataset_added:
+        recipe.save_mixed_dataset(
+            output_file_mixed,
+            ctx.dataset_num_procs,
+        )
 
 
 def _check_pipeline_dir(pipeline):
@@ -144,6 +276,127 @@ def _sdg_init(
     )
 
 
+def _generate_knowledge_qa_dataset(
+    logger, generated_dataset: Dataset, keep_context_separate=False
+):
+    def __create_qa_row(rec):
+        context = rec["document"]
+        instruction = _get_question(logger, rec)
+        response = _get_response(logger, rec)
+        metadata = {
+            "sdg_document": rec["document"],
+            "domain": rec["domain"],
+            "dataset": "document_knowledge_qa",
+        }
+        if "raw_document" in rec and "dataset_type" in rec:
+            metadata.update(
+                {
+                    "raw_document": rec["raw_document"],
+                    "dataset_type": rec["dataset_type"],
+                }
+            )
+        metadata = json.dumps(metadata)
+        if keep_context_separate:
+            messages = [
+                {"role": "user", "content": f"{instruction}"},
+                {"role": "assistant", "content": response},
+            ]
+            return {
+                "messages": messages,
+                "metadata": metadata,
+                "id": str(uuid.uuid4()),
+                "context": context,
+            }
+        messages = [
+            {"role": "user", "content": f"{context}\n\n{instruction}"},
+            {"role": "assistant", "content": response},
+        ]
+
+        return {"messages": messages, "metadata": metadata, "id": str(uuid.uuid4())}
+
+    knowledge_ds = generated_dataset.map(
+        __create_qa_row, remove_columns=generated_dataset.column_names
+    )
+    return knowledge_ds
+
+
+def _build_raft_dataset(ds: Dataset, p, num_doc_in_context=4):
+    all_context = ds["context"]
+    all_context = [
+        " ".join(e.split(" ")[: random.randint(100, 500)]) for e in all_context
+    ]
+    ds = ds.add_column("row_idx", range(ds.num_rows))
+
+    def __pick_documents(rec, p):
+        # Loop until we find enough other documents to add to the context
+        # for this document. Exit the loop early if we have fewer total
+        # documents than the number of documents we want in our context
+        # so that we don't end up looping forever. This handles edge
+        # cases where the number of generated instructions is very low,
+        # like in CI or user's testing small sizes.
+        while True:
+            selected_docs = random.choices(range(ds.num_rows), k=num_doc_in_context)
+            if ds.num_rows <= num_doc_in_context:
+                break
+            if rec["row_idx"] not in selected_docs:
+                break
+        if random.uniform(0, 1) < p:
+            docs = [
+                all_context[idx] for idx in selected_docs[: num_doc_in_context - 1]
+            ] + [rec["context"]]
+            # rec['indicator'] ='golden'
+        else:
+            docs = [all_context[idx] for idx in selected_docs]
+            # rec['indicator'] = 'distractor'
+        random.shuffle(docs)
+        docs = "\n".join(([f"Document:\n{e}\n\n" for idx, e in enumerate(docs)]))
+        user_idx, user_msg = [
+            (idx, rec_msg)
+            for idx, rec_msg in enumerate(rec["messages"])
+            if rec_msg["role"] == "user"
+        ][0]
+        user_inst = user_msg["content"]
+        rec["messages"][user_idx]["content"] = f"{docs}\n\n{user_inst}"
+        rec["messages"] = rec["messages"]
+        metadata = json.loads(rec["metadata"])
+        metadata["dataset"] += f"_raft_p{p}"
+        rec["metadata"] = json.dumps(metadata)
+        return rec
+
+    ds = ds.map(__pick_documents, fn_kwargs={"p": p}, remove_columns=["context"])
+    return ds
+
+
+def _conv_pretrain(rec):
+    rec["messages"] = [
+        {
+            "role": "pretraining",
+            "content": f"<|user|>\n{rec['messages'][0]['content']}\n<|assistant|>\n{rec['messages'][1]['content']}",
+        }
+    ]
+    return rec
+
+
+def _create_phase10_ds(logger, generated_dataset: Dataset):
+    # Phase 1.0
+    knowledge_ds = _generate_knowledge_qa_dataset(
+        logger, generated_dataset, keep_context_separate=True
+    )
+    knowledge_ds = _build_raft_dataset(knowledge_ds, p=0.4)
+
+    return knowledge_ds
+
+
+def _create_phase07_ds(logger, generated_dataset: Dataset):
+    # Phase 0.7
+    knowledge_ds = _generate_knowledge_qa_dataset(
+        logger, generated_dataset, keep_context_separate=False
+    )
+    knowledge_ds = knowledge_ds.map(_conv_pretrain)
+
+    return knowledge_ds
+
+
 # This is part of the public API, and used by instructlab.
 # TODO - parameter removal needs to be done in sync with a CLI change.
 # pylint: disable=unused-argument
@@ -208,8 +461,11 @@ def generate_data(
 
     name = Path(model_name).stem  # Just in case it is a file path
     date_suffix = datetime.now().replace(microsecond=0).isoformat().replace(":", "_")
+    output_file_messages = f"messages_{name}_{date_suffix}.jsonl"
     output_file_test = f"test_{name}_{date_suffix}.jsonl"
     output_file_train = f"train_{name}_{date_suffix}.jsonl"
+    output_file_mixed_knowledge = f"knowledge_train_msgs_{date_suffix}.jsonl"
+    output_file_mixed_skills = f"skills_train_msgs_{date_suffix}.jsonl"
 
     _gen_test_data(
         leaf_nodes,
@@ -254,6 +510,7 @@ def generate_data(
             "Synthesizing new instructions. If you aren't satisfied with the generated instructions, interrupt training (Ctrl-C) and try adjusting your YAML files. Adding more examples may help."
         )
 
+    generated_data = None
     for i, leaf_node in enumerate(leaf_nodes.values()):
         is_knowledge = False
         samples = leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count)
@@ -274,52 +531,67 @@ def generate_data(
         logger.debug("Samples: %s" % samples)
         ds = Dataset.from_list(samples)
         logger.debug("Dataset: %s" % ds)
-        generated_data = sdg.generate(ds)
+        new_generated_data = sdg.generate(ds)
+        generated_data = (
+            [new_generated_data]
+            if generated_data is None
+            else generated_data + [new_generated_data]
+        )
         logger.info("Generated %d samples" % len(generated_data))
         logger.debug("Generated data: %s" % generated_data)
 
         if is_knowledge:
-            knowledge_phase_data = create_phase07_ds(generated_data)
-            skills_phase_data = create_phase10_ds(generated_data)
-
-            knowledge_fpath = os.path.join(
-                output_dir, f"node_datasets_{date_suffix}/node_{i}_p07.jsonl"
+            knowledge_phase_data = _create_phase07_ds(logger, new_generated_data)
+            output_file_leaf_knowledge = (
+                f"node_datasets_{date_suffix}/node_{i}_p07.jsonl"
             )
-            skills_fpath = os.path.join(
-                output_dir, f"node_datasets_{date_suffix}/node_{i}_p10.jsonl"
+            _gen_leaf_node_data(
+                knowledge_phase_data,
+                knowledge_recipe,
+                os.path.join(output_dir, output_file_leaf_knowledge),
             )
-            knowledge_phase_data.to_json(knowledge_fpath, orient="records", lines=True)
-            skills_phase_data.to_json(skills_fpath, orient="records", lines=True)
 
-            knowledge_recipe.add_dataset(knowledge_fpath)
-            skills_recipe.add_dataset(skills_fpath)
+            skills_phase_data = _create_phase10_ds(logger, new_generated_data)
+            output_file_leaf_skills = f"node_datasets_{date_suffix}/node_{i}_p10.jsonl"
+            _gen_leaf_node_data(
+                skills_phase_data,
+                skills_recipe,
+                os.path.join(output_dir, output_file_leaf_skills),
+            )
         else:
-            messages = generated_data.map(
-                _convert_to_messages,
-                fn_kwargs={"sys_prompt": _SYS_PROMPT},
+            messages = new_generated_data.map(
+                _convert_to_leaf_node_messages,
+                fn_kwargs={"logger": logger, "sys_prompt": _SYS_PROMPT},
                 num_proc=pipeline_ctx.dataset_num_procs,
             )
-
-            fpath = os.path.join(
-                output_dir, f"node_datasets_{date_suffix}/node_{i}.jsonl"
+            output_file_leaf = f"node_datasets_{date_suffix}/node_{i}.jsonl"
+            _gen_leaf_node_data(
+                messages,
+                skills_recipe,
+                os.path.join(output_dir, output_file_leaf),
+                sampling_size=NUM_SYNTH_SKILLS,
             )
-            messages.to_json(fpath, orient="records", lines=True)
-            skills_recipe.add_dataset(fpath, NUM_SYNTH_SKILLS)
 
-    if knowledge_recipe.dataset_added:
-        knowledge_recipe.save_mixed_dataset(
-            f"{output_dir}/knowledge_train_msgs_{date_suffix}.jsonl",
-            pipeline_ctx.dataset_num_procs,
-        )
+    if generated_data is None:
+        generated_data = []
 
-    if skills_recipe.dataset_added:
-        skills_recipe.save_mixed_dataset(
-            f"{output_dir}/skills_train_msgs_{date_suffix}.jsonl",
-            pipeline_ctx.dataset_num_procs,
-        )
-        skills_recipe.save_legacy_dataset(
-            f"{output_dir}/{output_file_train}", pipeline_ctx.dataset_num_procs
-        )
+    _gen_train_data(
+        logger,
+        generated_data,
+        os.path.join(output_dir, output_file_train),
+        os.path.join(output_dir, output_file_messages),
+    )
+
+    _gen_mixed_data(
+        knowledge_recipe,
+        os.path.join(output_dir, output_file_mixed_knowledge),
+        pipeline_ctx,
+    )
+    _gen_mixed_data(
+        skills_recipe,
+        os.path.join(output_dir, output_file_mixed_skills),
+        pipeline_ctx,
+    )
 
     generate_duration = time.time() - generate_start
     logger.info(f"Generation took {generate_duration:.2f}s")
