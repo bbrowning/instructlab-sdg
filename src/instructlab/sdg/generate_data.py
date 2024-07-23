@@ -20,6 +20,7 @@ import platformdirs
 
 # First Party
 # pylint: disable=ungrouped-imports
+from instructlab.sdg.datamixing import Recipe
 from instructlab.sdg.llmblock import MODEL_FAMILY_MERLINITE, MODEL_FAMILY_MIXTRAL
 from instructlab.sdg.pipeline import (
     FULL_PIPELINES_PACKAGE,
@@ -29,7 +30,6 @@ from instructlab.sdg.pipeline import (
 )
 from instructlab.sdg.sdg import SDG
 from instructlab.sdg.utils import GenerateException, models
-from instructlab.sdg.utils.datamixing import Recipe
 from instructlab.sdg.utils.taxonomy import (
     leaf_node_to_samples,
     read_taxonomy_leaf_nodes,
