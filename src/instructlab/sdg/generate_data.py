@@ -37,7 +37,13 @@ from instructlab.sdg.utils.taxonomy import (
 
 _SYS_PROMPT = "I am, Red Hat® Instruct Model based on Granite 7B, an AI language model developed by Red Hat and IBM Research, based on the Granite-7b-base language model. My primary function is to be a chat assistant."
 
-# How many samples to pick from each skill when mixing skill datasets
+# This determines how many samples to pick from each skill when mixing
+# skill datasets. It's only used for skills, as knowledge may require
+# a variable number of samples depending on the length of the
+# knowledge documents in question. The expectation is that this is
+# enough samples to sufficiently learn a new skill while also ensuring
+# a balance of overall mixed data when learning multiple skills at
+# once.
 NUM_SYNTH_SKILLS = 30
 
 
@@ -84,6 +90,10 @@ def _get_response(logger, synth_example):
 def _convert_to_messages(sample):
     """
     Convert a sample dictionary to contain 'messages' and 'metadata' columns required for training.
+
+    Note that this is for the legacy messages format, used before data
+    mixing was introduced. Once we can drop the older `messages_*.jsonl`
+    output files, this can go away.
     """
     # Create user query message
     user_query = sample["inputs"]
@@ -112,6 +122,9 @@ def _convert_to_leaf_node_messages(sample: dict, logger, sys_prompt: str):
     """
     Convert a sample dictionary to contain a 'messages' column required
     for training.
+
+    Note that this is for the new messages format, introduced with data
+    mixing.
     """
     user_query = _unescape(_get_question(logger, sample))
     response = _unescape(_get_response(logger, sample))
@@ -129,6 +142,14 @@ def _convert_to_leaf_node_messages(sample: dict, logger, sys_prompt: str):
 def _gen_train_data(
     logger, machine_instruction_data, output_file_train, output_file_messages
 ):
+    """
+    Generate training data in the legacy system/user/assistant format
+    used in train_*.jsonl as well as the legacy messages format used
+    in messages_*.jsonl files.
+
+    This can be dropped once we no longer need those formats and are fully
+    using the new data mixing messages format.
+    """
     train_data = []
     messages_data = []
 
@@ -167,6 +188,10 @@ def _gen_test_data(
     leaf_nodes,
     output_file_test,
 ):
+    """
+    Generate test data in the format needed by the legacy Linux training
+    in instructlab/instructlab.
+    """
     test_data = []
     for _, leaf_node in leaf_nodes.items():
         for seed_example in leaf_node:
@@ -192,11 +217,20 @@ def _gen_test_data(
 def _gen_leaf_node_data(
     leaf_node_data, recipe, output_file_leaf_node, sampling_size=1.0
 ):
+    """
+    Write the data generated from each taxonomy leaf node to a file.
+    Later on, after all data is generated, the data mixing will read data
+    from these files to generate the overall mixed dataset.
+    """
     leaf_node_data.to_json(output_file_leaf_node, orient="records", lines=True)
     recipe.add_dataset(output_file_leaf_node, sampling_size)
 
 
 def _gen_mixed_data(recipe, output_file_mixed, ctx):
+    """
+    Mix the generated leaf node data into a single dataset and write it to
+    disk. The heavy lifting is delegated to the Recipe class.
+    """
     if recipe.dataset_added:
         recipe.save_mixed_dataset(
             output_file_mixed,
@@ -279,7 +313,18 @@ def _sdg_init(
 def _generate_knowledge_qa_dataset(
     logger, generated_dataset: Dataset, keep_context_separate=False
 ):
+    """
+    Generate question and answer pairs from the newly generated dataset
+    for each taxonomy leaf node. Each row of the generated dataset gets
+    converted to have messages, metadata, and id columns.
+
+    If `keep_context_separate` is True, then a context column is also added.
+    If `keep_context_separate` is False, the context colum is omitted and
+    the context is instead added directly to the user message content.
+    """
+
     def __create_qa_row(rec):
+        msg_id = str(uuid.uuid4())
         context = rec["document"]
         instruction = _get_question(logger, rec)
         response = _get_response(logger, rec)
@@ -304,7 +349,7 @@ def _generate_knowledge_qa_dataset(
             return {
                 "messages": messages,
                 "metadata": metadata,
-                "id": str(uuid.uuid4()),
+                "id": msg_id,
                 "context": context,
             }
         messages = [
@@ -312,7 +357,7 @@ def _generate_knowledge_qa_dataset(
             {"role": "assistant", "content": response},
         ]
 
-        return {"messages": messages, "metadata": metadata, "id": str(uuid.uuid4())}
+        return {"messages": messages, "metadata": metadata, "id": msg_id}
 
     knowledge_ds = generated_dataset.map(
         __create_qa_row, remove_columns=generated_dataset.column_names
@@ -321,6 +366,18 @@ def _generate_knowledge_qa_dataset(
 
 
 def _build_raft_dataset(ds: Dataset, p, num_doc_in_context=4):
+    """
+    Add additional context to each sample in a knowledge_qa_dataset by
+    selecting the context from random other samples and adding that
+    combined with this sample's original context all into the user content
+    section of the sample's messages.
+
+    This expects to be called with a dataset that has a `context` column,
+    such as the output from _generate_knowledge_qa_dataset with the param
+    `keep_context_separate` equal to True. When this finishes, the `context`
+    column is removed from the dataset and all context moved to the user
+    messages.
+    """
     all_context = ds["context"]
     all_context = [
         " ".join(e.split(" ")[: random.randint(100, 500)]) for e in all_context
@@ -368,6 +425,12 @@ def _build_raft_dataset(ds: Dataset, p, num_doc_in_context=4):
 
 
 def _conv_pretrain(rec):
+    """
+    Convert a messages dataset that contains only user/assistant entries per
+    message (and in that order) to a pretraining message used downstream by
+    the training pipeline. `_generate_knowledge_qa_dataset` creates the type
+    of dataset expected here.
+    """
     rec["messages"] = [
         {
             "role": "pretraining",
@@ -378,7 +441,13 @@ def _conv_pretrain(rec):
 
 
 def _create_phase10_ds(logger, generated_dataset: Dataset):
-    # Phase 1.0
+    """
+    Create a dataset for Phase 1.0 of downstream training.
+
+    This dataset is in our messages format, with each sample having
+    additional context mixed in from other samples to improve the
+    training outcomes.
+    """
     knowledge_ds = _generate_knowledge_qa_dataset(
         logger, generated_dataset, keep_context_separate=True
     )
@@ -388,6 +457,13 @@ def _create_phase10_ds(logger, generated_dataset: Dataset):
 
 
 def _create_phase07_ds(logger, generated_dataset: Dataset):
+    """
+    Create a dataset for Phase 0.7 of downstream training.
+
+    Phase 0.7 is a pretraining phase, and this dataset contains messages
+    with a special `pretraining` role used by downstream training before
+    running the full training with the Phase 1.0 dataset.
+    """
     # Phase 0.7
     knowledge_ds = _generate_knowledge_qa_dataset(
         logger, generated_dataset, keep_context_separate=False
