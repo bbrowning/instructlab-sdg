@@ -587,8 +587,11 @@ def generate_data(
         )
 
     generated_data = None
-    for i, leaf_node in enumerate(leaf_nodes.values()):
+    for leaf_node_path, leaf_node in leaf_nodes.items():
         is_knowledge = False
+        leaf_node_path = "__".join(
+            [f"{idx+1}{e}" for idx, e in enumerate(leaf_node_path.split("->"))]
+        )
         samples = leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count)
 
         if not samples:
@@ -619,7 +622,7 @@ def generate_data(
         if is_knowledge:
             knowledge_phase_data = _create_phase07_ds(logger, new_generated_data)
             output_file_leaf_knowledge = (
-                f"node_datasets_{date_suffix}/node_{i}_p07.jsonl"
+                f"node_datasets_{date_suffix}/{leaf_node_path}_p07.jsonl"
             )
             _gen_leaf_node_data(
                 knowledge_phase_data,
@@ -628,7 +631,9 @@ def generate_data(
             )
 
             skills_phase_data = _create_phase10_ds(logger, new_generated_data)
-            output_file_leaf_skills = f"node_datasets_{date_suffix}/node_{i}_p10.jsonl"
+            output_file_leaf_skills = (
+                f"node_datasets_{date_suffix}/{leaf_node_path}_p10.jsonl"
+            )
             _gen_leaf_node_data(
                 skills_phase_data,
                 skills_recipe,
@@ -640,7 +645,7 @@ def generate_data(
                 fn_kwargs={"logger": logger, "sys_prompt": _SYS_PROMPT},
                 num_proc=pipeline_ctx.dataset_num_procs,
             )
-            output_file_leaf = f"node_datasets_{date_suffix}/node_{i}.jsonl"
+            output_file_leaf = f"node_datasets_{date_suffix}/{leaf_node_path}.jsonl"
             _gen_leaf_node_data(
                 messages,
                 skills_recipe,
