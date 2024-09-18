@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import tempfile
+from datetime import datetime
 
 # Third Party
 from instructlab.schema.taxonomy import DEFAULT_TAXONOMY_FOLDERS as TAXONOMY_FOLDERS
@@ -16,14 +17,16 @@ from instructlab.schema.taxonomy import (
     TaxonomyParser,
     TaxonomyReadingException,
 )
+from pypdf import PdfReader
 import git
 import gitdb
 import yaml
 
 # Local
-from . import chunking
+from . import docprocessor
 
 logger = logging.getLogger(__name__)
+DOC_FILEPATH = Path("~/.local/share/instructlab/documents").expanduser()
 
 
 def _is_taxonomy_file(fn: str) -> bool:
@@ -105,44 +108,63 @@ def _get_taxonomy(repo="taxonomy"):
 
 def _get_documents(
     source: Dict[str, Union[str, List[str]]],
-    skip_checkout: bool = False,
+    skip_checkout: bool = False, output_dir: Path = Path()
 ) -> List[str]:
     """
-    Retrieve the content of files from a Git repository.
+    Retrieve the content of files (Markdown and PDF) from a Git repository.
 
     Args:
         source (dict): Source info containing repository URL, commit hash, and list of file patterns.
+        skip_checkout (bool, optional): If True, skips checking out the specific commit. Defaults to False.
+        output_dir TODO
 
     Returns:
-         List[str]: List of document contents.
-    """ ""
+        List[str]: List of document contents (Markdown as text and PDFs as extracted text).
+
+    Raises:
+        SystemExit: If no valid documents are found.
+        OSError, GitCommandError, FileNotFoundError: For errors during Git operations or file access.
+    """
     repo_url = source.get("repo")
     commit_hash = source.get("commit")
     file_patterns = source.get("patterns", [])
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            repo = git.Repo.clone_from(repo_url, temp_dir)
-            if not skip_checkout:
-                repo.git.checkout(commit_hash)
 
-            file_contents = []
+    try:
+        repo = git.Repo.clone_from(repo_url, output_dir)
+        if not skip_checkout:
+            repo.git.checkout(commit_hash)
 
-            logger.debug("Processing files...")
-            for pattern in file_patterns:
-                for file_path in glob.glob(os.path.join(repo.working_dir, pattern)):
-                    if os.path.isfile(file_path) and file_path.endswith(".md"):
+        file_contents = []
+
+        logger.debug("Processing files...")
+        for pattern in file_patterns:
+            for file_path in glob.glob(os.path.join(repo.working_dir, pattern)):
+                if os.path.isfile(file_path):
+                    if file_path.endswith(".md"):
+                        # Process markdown files
                         with open(file_path, "r", encoding="utf-8") as file:
                             file_contents.append(file.read())
+                    elif file_path.endswith(".pdf"):
+                        # Process PDF files
+                        with open(file_path, "rb") as file:
+                            reader = PdfReader(file)  # Use pypdf PdfReader
+                            pdf_text = ""
+                            for page in reader.pages:  # Iterating through pages
+                                pdf_text += page.extract_text()
+                            file_contents.append(pdf_text)
 
-            if file_contents:
-                return file_contents
-            raise SystemExit("Couldn't find knowledge documents")
-        except (OSError, git.exc.GitCommandError, FileNotFoundError) as e:
-            raise e
+        if file_contents:
+            filepaths = [DOC_FILEPATH / p for p in file_patterns]
+            return file_contents, filepaths
+        raise SystemExit("Couldn't find knowledge documents")
+
+    except (OSError, git.exc.GitCommandError, FileNotFoundError) as e:
+        logger.error("Error retrieving documents: %s", str(e))
+        raise e
 
 
 # pylint: disable=broad-exception-caught
-def _read_taxonomy_file(file_path: str | Path, yamllint_config: str | None = None):
+def _read_taxonomy_file(file_path: str | Path, yamllint_config: str | None = None, output_dir: Path = Path()):
     seed_instruction_data = []
 
     parser = TaxonomyParser(
@@ -163,8 +185,10 @@ def _read_taxonomy_file(file_path: str | Path, yamllint_config: str | None = Non
         task_description = contents.get("task_description", None)
         domain = contents.get("domain")
         documents = contents.get("document")
+        print(f"")
         if documents:
-            documents = _get_documents(source=documents)
+            date_suffix = datetime.now().replace(microsecond=0).isoformat().replace(":", "_")
+            document_contents, doc_filepaths = _get_documents(source=documents, output_dir=output_dir / f"documents-{date_suffix}")
             logger.debug("Content from git repo fetched")
 
         for seed_example in contents.get("seed_examples"):
@@ -176,7 +200,8 @@ def _read_taxonomy_file(file_path: str | Path, yamllint_config: str | None = Non
                         "questions_and_answers": question_answer_list,
                         "context": context,
                         "taxonomy_path": tax_path,
-                        "document": documents,
+                        "documents": document_contents,
+                        "filepaths": doc_filepaths,
                         "domain": domain,
                         "document_outline": contents.get("document_outline"),
                     }
@@ -203,7 +228,7 @@ def _read_taxonomy_file(file_path: str | Path, yamllint_config: str | None = Non
 
 
 def read_taxonomy(
-    taxonomy: str | Path, taxonomy_base: str, yaml_rules: str | None = None
+    taxonomy: str | Path, taxonomy_base: str, yaml_rules: str | None = None, output_dir: Path = Path()
 ):
     yamllint_config = None  # If no custom rules file, use default config
     if yaml_rules is not None:  # user attempted to pass custom rules file
@@ -218,7 +243,7 @@ def read_taxonomy(
     is_file = os.path.isfile(taxonomy)
     if is_file:  # taxonomy is file
         seed_instruction_data, warnings, errors = _read_taxonomy_file(
-            taxonomy, yamllint_config
+            taxonomy, yamllint_config, output_dir
         )
         if warnings:
             logger.warning(
@@ -241,7 +266,7 @@ def read_taxonomy(
                 logger.debug(f"* {e}")
         for f in taxonomy_files:
             file_path = os.path.join(taxonomy, f)
-            data, warnings, errors = _read_taxonomy_file(file_path, yamllint_config)
+            data, warnings, errors = _read_taxonomy_file(file_path, yamllint_config, output_dir)
             total_warnings += warnings
             total_errors += errors
             if data:
@@ -257,8 +282,8 @@ def read_taxonomy(
     return seed_instruction_data
 
 
-def read_taxonomy_leaf_nodes(taxonomy, taxonomy_base, yaml_rules):
-    seed_instruction_data = read_taxonomy(taxonomy, taxonomy_base, yaml_rules)
+def read_taxonomy_leaf_nodes(taxonomy, taxonomy_base, yaml_rules, output_dir):
+    seed_instruction_data = read_taxonomy(taxonomy, taxonomy_base, yaml_rules, output_dir)
 
     # Transform into a more convenient format to feed into our updated SDG library
     leaf_nodes = {}
@@ -270,16 +295,18 @@ def read_taxonomy_leaf_nodes(taxonomy, taxonomy_base, yaml_rules):
     return leaf_nodes
 
 
-def _knowledge_leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count):
+def _knowledge_leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count, output_dir, model_name):
     samples = []
     # document is the same for the whole leaf node
     chunks = (
-        chunking.chunk_document(
-            documents=leaf_node[0]["document"],
+        docprocessor.chunk_documents(
+            leaf_node=leaf_node,
             server_ctx_size=server_ctx_size,
             chunk_word_count=chunk_word_count,
+            output_dir=output_dir,
+            model_name=model_name,
         )
-        if leaf_node[0].get("document")
+        if leaf_node[0].get("documents")
         else []
     )
 
@@ -325,11 +352,11 @@ def _skill_leaf_node_to_samples(leaf_node):
     return samples
 
 
-def leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count):
+def leaf_node_to_samples(leaf_node, server_ctx_size, chunk_word_count, output_dir, model_name):
     if not leaf_node:
         return []
-    if leaf_node[0].get("document"):
+    if leaf_node[0].get("documents"):
         return _knowledge_leaf_node_to_samples(
-            leaf_node, server_ctx_size, chunk_word_count
+            leaf_node, server_ctx_size, chunk_word_count, output_dir, model_name
         )
     return _skill_leaf_node_to_samples(leaf_node)
