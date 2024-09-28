@@ -2,29 +2,20 @@
 
 # Standard
 from pathlib import Path
-from typing import List, Iterable
+from typing import Iterable, List, Tuple
 import json
 import logging
 import re
 
-from pathlib import Path
-from typing import List, Tuple
-import json
-import re
-
-# Third Party
-from docling.datamodel.base_models import PipelineOptions 
-from docling.datamodel.document import ConvertedDocument, DocumentConversionInput
-from docling.document_converter import DocumentConverter, ConversionStatus
-from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
-
 # Third Party
 from datasets import Dataset, concatenate_datasets
+from docling.datamodel.base_models import PipelineOptions
+from docling.datamodel.document import ConvertedDocument, DocumentConversionInput
+from docling.document_converter import ConversionStatus, DocumentConverter
+from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 from tabulate import tabulate
 from transformers import AutoTokenizer
 import yaml
-
-# Local
 
 logger = logging.getLogger(__name__)
 DOC_FILEPATH = Path("~/.local/share/instructlab/documents").expanduser()
@@ -562,7 +553,9 @@ def chunk_markdowns(
     return content
 
 
-def chunk_pdfs(pdf_docs: List, filepaths: List, leaf_node_path: Path, model_name: str = None):
+def chunk_pdfs(
+    pdf_docs: List, filepaths: List, leaf_node_path: Path, model_name: str = None
+):
     """Semantically chunk PDF documents.
 
     TODO
@@ -575,7 +568,7 @@ def chunk_pdfs(pdf_docs: List, filepaths: List, leaf_node_path: Path, model_name
     """)
     artifacts_path = DocumentConverter.download_models_hf()
     converter = DocumentConverter(artifacts_path=artifacts_path)
-    inputs = DocumentConversionInput.from_paths(filepaths)  
+    inputs = DocumentConversionInput.from_paths(filepaths)
     parsed_pdfs = converter.convert(inputs)
     print(f"THIS IS KHALED: {parsed_pdfs=}")
 
@@ -584,7 +577,6 @@ def chunk_pdfs(pdf_docs: List, filepaths: List, leaf_node_path: Path, model_name
 
     export_documents(parsed_pdfs, docling_jsons_path)
     parsed_dicts = [p.render_as_dict() for p in parsed_pdfs]
-
 
     # TODO name files better
     for i, pd in enumerate(parsed_dicts):
@@ -597,7 +589,9 @@ def chunk_pdfs(pdf_docs: List, filepaths: List, leaf_node_path: Path, model_name
     dp = DocProcessor(
         parsed_doc_dir=str(docling_jsons_path),
         tokenizer_model_name=model_name,
-        qna_yaml_path=Path("~/.local/share/instructlab/taxonomy").expanduser() / leaf_node_path / "qna.yaml",
+        qna_yaml_path=Path("~/.local/share/instructlab/taxonomy").expanduser()
+        / leaf_node_path
+        / "qna.yaml",
     )
 
     chunked_pdfs = list(dp.get_processed_dataset())
