@@ -484,14 +484,9 @@ def chunk_documents(
     Returns:
          List[str]: List of chunked documents.
     """
-    print(f"THIS IS KHALED: in chunk_documents {leaf_node=}")
     filepaths = leaf_node[0]["filepaths"]
     documents = leaf_node[0]["documents"]
     leaf_node_path = Path(leaf_node[0]["taxonomy_path"].replace("->", "/"))
-    print(f"""THIS IS KHALED:
-        {filepaths=},
-        {documents=},
-    """)
 
     # Check for single document
     if isinstance(documents, str):
@@ -504,6 +499,7 @@ def chunk_documents(
 
     md_docs, pdf_docs = _split_docs_by_filetype(zip(documents, filepaths))
 
+    print(f"THIS IS KHALED: {md_docs=}\n {pdf_docs=}")
     chunked_mds = chunk_markdowns(md_docs, server_ctx_size, chunk_word_count)
     chunked_pdfs = chunk_pdfs(pdf_docs, filepaths, leaf_node_path, model_name)
 
@@ -598,8 +594,8 @@ def chunk_pdfs(
     )
 
     chunked_pdfs = list(dp.get_processed_dataset())
-    print(f"THIS IS KHALED: {chunk_pdfs=}")
-    print(f"THIS IS KHALED: {type(chunk_pdfs)=}")
+    print(f"THIS IS KHALED: {chunked_pdfs=}")
+    print(f"THIS IS KHALED: {type(chunked_pdfs)=}")
 
     return chunked_pdfs
 
