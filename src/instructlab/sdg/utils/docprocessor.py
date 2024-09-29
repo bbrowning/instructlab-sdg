@@ -569,7 +569,7 @@ def chunk_pdfs(
     inputs = DocumentConversionInput.from_paths(filepaths)
     parsed_pdfs = converter.convert(inputs)
 
-    docling_artifacts_path = export_documents(parsed_pdfs, docling_artifacts_path)
+    docling_artifacts_path = export_documents(parsed_pdfs)
     print(f"THIS IS KHALED {docling_artifacts_path=}")
 
     dp = DocProcessor(
