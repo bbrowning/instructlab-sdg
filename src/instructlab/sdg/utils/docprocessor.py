@@ -564,29 +564,16 @@ def chunk_pdfs(
     print(f"""THIS IS KHALED: CHUNKING PDF DOCS
         {pdf_docs[0]=}
     """)
-    artifacts_path = DocumentConverter.download_models_hf()
-    converter = DocumentConverter(artifacts_path=artifacts_path)
+    model_artifacts_path = DocumentConverter.download_models_hf()
+    converter = DocumentConverter(artifacts_path=model_artifacts_path)
     inputs = DocumentConversionInput.from_paths(filepaths)
     parsed_pdfs = converter.convert(inputs)
-    print(f"THIS IS KHALED: {parsed_pdfs=}")
-    print(f"THIS IS KHALED: {artifacts_path=}")
 
-    docling_jsons_path = DOC_FILEPATH / "docling-jsons"
-    docling_jsons_path.mkdir(parents=True, exist_ok=True)
-
-    export_documents(parsed_pdfs, docling_jsons_path)
-    parsed_dicts = [p.render_as_dict() for p in parsed_pdfs]
-
-    # TODO name files better
-    for i, pd in enumerate(parsed_dicts):
-        fp = docling_jsons_path / f"docling_{i}.json"
-
-        with open(fp, "w") as json_file:
-            for entry in pd:
-                json_file.write(json.dumps(entry) + "\n")
+    docling_artifacts_path = export_documents(parsed_pdfs, docling_artifacts_path)
+    print(f"THIS IS KHALED {docling_artifacts_path=}")
 
     dp = DocProcessor(
-        parsed_doc_dir=str(docling_jsons_path),
+        parsed_doc_dir=str(docling_artifacts_path),
         tokenizer_model_name=model_name,
         qna_yaml_path=Path("~/.local/share/instructlab/taxonomy").expanduser()
         / leaf_node_path
@@ -600,11 +587,12 @@ def chunk_pdfs(
     return chunked_pdfs
 
 
-def export_documents(
-    converted_docs: Iterable[ConvertedDocument],
-    output_dir: Path,
-):
-    output_dir.mkdir(parents=True, exist_ok=True)
+def export_documents(converted_docs: Iterable[ConvertedDocument]):
+    """TODO
+    
+    """
+    docling_artifacts_path = DOC_FILEPATH / "docling-artifacts"
+    docling_artifacts_path.mkdir(parents=True, exist_ok=True)
 
     success_count = 0
     failure_count = 0
@@ -615,11 +603,11 @@ def export_documents(
             doc_filename = doc.input.file.stem
 
             # Export Deep Search document JSON format:
-            with (output_dir / f"{doc_filename}.json").open("w") as fp:
+            with (docling_artifacts_path / f"{doc_filename}.json").open("w") as fp:
                 fp.write(json.dumps(doc.render_as_dict()))
 
             # Export Markdown format:
-            with (output_dir / f"{doc_filename}.md").open("w") as fp:
+            with (docling_artifacts_path / f"{doc_filename}.md").open("w") as fp:
                 fp.write(doc.render_as_markdown())
         else:
             logger.info(f"Document {doc.input.file} failed to convert.")
@@ -628,3 +616,5 @@ def export_documents(
     logger.info(
         f"Processed {success_count + failure_count} docs, of which {failure_count} failed"
     )
+
+    return docling_artifacts_path
