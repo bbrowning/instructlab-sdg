@@ -18,7 +18,7 @@ from transformers import AutoTokenizer
 import yaml
 
 logger = logging.getLogger(__name__)
-DOC_FILEPATH = Path("~/.local/share/instructlab/documents").expanduser()
+DOC_FILEPATH = Path("~/.local/share/instructlab/datasets").expanduser()
 _DEFAULT_CHUNK_OVERLAP = 100
 
 
