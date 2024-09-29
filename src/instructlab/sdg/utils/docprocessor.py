@@ -294,8 +294,8 @@ class DocProcessor:
     def __init__(
         self,
         parsed_doc_dir: Path,
-        tokenizer_model_name: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
         qna_yaml_path: Path = None,
+        tokenizer_model_name: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
     ):
         """
         Initialize the DocProcessor.
@@ -309,6 +309,9 @@ class DocProcessor:
             self._path_validator(qna_yaml_path) if qna_yaml_path else None
         )
         self.docling_jsons = list(self.parsed_doc_dir.glob("*.json"))
+
+        if tokenizer_model_name is None:
+            tokenizer_model_name = "mistralai/Mixtral-8x7B-Instruct-v0.1"
         self.tokenizer = create_tokenizer(tokenizer_model_name)
         print(f"""THIS IS KHALED: INIT DOCPROCESSOR:
               {self.parsed_doc_dir=}, 
@@ -554,8 +557,7 @@ def chunk_markdowns(
 
 
 def chunk_pdfs(
-    pdf_docs: List, filepaths: List, leaf_node_path: Path, model_name: str = None
-):
+    pdf_docs: List, filepaths: List, leaf_node_path: Path, model_name: str):
     """Semantically chunk PDF documents.
 
     TODO
@@ -571,6 +573,7 @@ def chunk_pdfs(
     inputs = DocumentConversionInput.from_paths(filepaths)
     parsed_pdfs = converter.convert(inputs)
     print(f"THIS IS KHALED: {parsed_pdfs=}")
+    print(f"THIS IS KHALED: {artifacts_path=}")
 
     docling_jsons_path = DOC_FILEPATH / "docling-jsons"
     docling_jsons_path.mkdir(parents=True, exist_ok=True)
