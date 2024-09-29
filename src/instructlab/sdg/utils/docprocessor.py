@@ -593,6 +593,7 @@ def export_documents(converted_docs: Iterable[ConvertedDocument]):
     """
     docling_artifacts_path = DOC_FILEPATH / "docling-artifacts"
     docling_artifacts_path.mkdir(parents=True, exist_ok=True)
+    print(f"THIS IS KHALED IN EXPORT DOCUMENTS: {docling_artifacts_path}")
 
     success_count = 0
     failure_count = 0
