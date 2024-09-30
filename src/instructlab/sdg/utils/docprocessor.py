@@ -580,10 +580,14 @@ def chunk_pdfs(
         / "qna.yaml",
     )
 
-    chunked_pdfs = list(dp.get_processed_dataset())
-    print(f"THIS IS KHALED: {chunked_pdfs=}")
+    chunked_pdfs = dp.get_processed_dataset()
+    for k, v in chunked_pdfs.to_dict().items():
+        print(f"{k=}: ; {type(v)=}\n")
+        print(f"{v[:5]=}\n\n")
     print(f"THIS IS KHALED: {type(chunked_pdfs)=}")
+    print(f"THIS IS KHALED: {chunked_pdfs.shape=}")
 
+    raise Exception('STOPPING')
     return chunked_pdfs
 
 
