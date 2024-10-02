@@ -11,6 +11,7 @@ import re
 from datasets import Dataset, concatenate_datasets
 from docling.datamodel.base_models import PipelineOptions
 from docling.datamodel.document import ConvertedDocument, DocumentConversionInput
+from docling.datamodel.pipeline_options import PipelineOptions
 from docling.document_converter import ConversionStatus, DocumentConverter
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 from tabulate import tabulate
@@ -59,7 +60,8 @@ def create_tokenizer(model_name: str):
         AutoTokenizer: The tokenizer instance.
     """
     try:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # TODO: local_files_only=True and download tokenizer elsewhere
+        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=False)
         logger.info(f"Successfully loaded tokenizer from: {model_name}")
         return tokenizer
     except Exception as e:
@@ -294,7 +296,6 @@ class DocProcessor:
     def __init__(
         self,
         parsed_doc_dir: Path,
-        qna_yaml_path: Path = None,
         tokenizer_model_name: str = "mistralai/Mixtral-8x7B-Instruct-v0.1",
     ):
         """
@@ -302,12 +303,8 @@ class DocProcessor:
         Args:
             parsed_doc_dir (Path): Directory containing parsed docling JSON files.
             tokenizer_model_name (str): The name of the model or path to the tokenizer.
-            qna_yaml_path (Path, optional): Path to the qna YAML file.
         """
         self.parsed_doc_dir = self._path_validator(parsed_doc_dir)
-        self.qna_yaml = self._load_qna_yaml(
-            self._path_validator(qna_yaml_path) if qna_yaml_path else None
-        )
         self.docling_jsons = list(self.parsed_doc_dir.glob("*.json"))
 
         if tokenizer_model_name is None:
@@ -315,7 +312,6 @@ class DocProcessor:
         self.tokenizer = create_tokenizer(tokenizer_model_name)
         print(f"""THIS IS KHALED: INIT DOCPROCESSOR:
               {self.parsed_doc_dir=}, 
-              {self.qna_yaml=}, 
               {self.docling_jsons=},
               {self.tokenizer}
         """)
@@ -334,48 +330,25 @@ class DocProcessor:
                 raise FileNotFoundError(f"{path} does not exist.")
         return path
 
-    def _load_qna_yaml(self, qna_yaml_path: Path) -> dict:
+    def _process_parsed_docling_json(self, json_fp: Path) -> List:
         """
-        Load the qna YAML file.
-        Args:
-            qna_yaml_path (Path): Path to the knowledge qna YAML file.
-        Returns:
-            dict: Dictionary corresponding to knowledge qna YAML file.
-        """
-        if qna_yaml_path:
-            with open(qna_yaml_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
-        return {}
-
-    def _process_parsed_docling_json(self, json_fp: Path) -> Dataset:
-        """
-        Process the parsed docling json file and return a dataset.
+        Process the parsed docling json file and return a list of chunks.
         Args:
             json_fp (Path): Path to the parsed docling json file.
         Returns:
-            Dataset: Dataset object.
+            List: the list of chunks
         """
         logger.info(f"Processing parsed docling json file: {json_fp}")
         print(f"THIS IS KHALED: {json_fp=}")
         with open(json_fp, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        file_name = json_fp.stem
         chunks = build_chunks_from_docling_json(
             data,
             max_token_per_chunk=500,
             tokenizer=self.tokenizer,
         )
-        chunks = fuse_texts(chunks, 200)
-        return Dataset.from_dict(
-            {
-                "document": chunks,
-                "document_outline": [self.qna_yaml.get("document_outline", "")]
-                * len(chunks),
-                "document_title": [file_name] * len(chunks),
-                "domain": [self.qna_yaml.get("domain", "")] * len(chunks),
-            }
-        )
+        return fuse_texts(chunks, 200)
 
     def _add_icls(self, chunked_document: Dataset) -> Dataset:
         """
@@ -385,7 +358,7 @@ class DocProcessor:
         Returns:
             Dataset: Dataset object with ICLS label.
         """
-        icl = self.qna_yaml.get("seed_examples", [])
+        icl = "" #self.qna_yaml.get("seed_examples", [])
         chunked_document_all_icl = []
         for icl_ in icl:
             chunked_document_all_icl.append(
@@ -424,18 +397,18 @@ class DocProcessor:
         )
         return new_ds
 
-    def get_processed_dataset(self) -> Dataset:
+    def get_processed_dataset(self) -> List:
         """
-        Process all the parsed docling json files and return a dataset.
+        Process all the parsed docling json files and return a List
+        of chunks.
         Returns:
-            Dataset: Dataset object.
+            List: the list of chunks.
         """
-        datasets = []
+        chunks = []
         for json_fp in self.docling_jsons:
-            chunk_ds = self._process_parsed_docling_json(json_fp)
-            chunk_ds_with_icls = self._add_icls(chunk_ds)
-            datasets.append(chunk_ds_with_icls)
-        return safe_concatenate_datasets(datasets)
+            new_chunks = self._process_parsed_docling_json(json_fp)
+            chunks += new_chunks
+        return chunks
 
 
 def _num_tokens_from_words(num_words) -> int:
@@ -564,8 +537,16 @@ def chunk_pdfs(
     print(f"""THIS IS KHALED: CHUNKING PDF DOCS
         {pdf_docs[0]=}
     """)
+    # TODO: Don't download these directly from HF here
+    # It should be an explicit operation from the user
     model_artifacts_path = DocumentConverter.download_models_hf()
-    converter = DocumentConverter(artifacts_path=model_artifacts_path)
+    pipeline_options = PipelineOptions()
+    # TODO: We might want OCR, but it should be GPU accelerated
+    pipeline_options.do_ocr = False
+    converter = DocumentConverter(
+        artifacts_path=model_artifacts_path,
+        pipeline_options=pipeline_options,
+    )
     inputs = DocumentConversionInput.from_paths(filepaths)
     parsed_pdfs = converter.convert(inputs)
 
@@ -575,20 +556,9 @@ def chunk_pdfs(
     dp = DocProcessor(
         parsed_doc_dir=str(docling_artifacts_path),
         tokenizer_model_name=model_name,
-        qna_yaml_path=Path("~/.local/share/instructlab/taxonomy").expanduser()
-        / leaf_node_path
-        / "qna.yaml",
     )
 
-    chunked_pdfs = dp.get_processed_dataset()
-    for k, v in chunked_pdfs.to_dict().items():
-        print(f"{k=}: ; {type(v)=}\n")
-        print(f"{v[:5]=}\n\n")
-    print(f"THIS IS KHALED: {type(chunked_pdfs)=}")
-    print(f"THIS IS KHALED: {chunked_pdfs.shape=}")
-
-    raise Exception('STOPPING')
-    return chunked_pdfs
+    return dp.get_processed_dataset()
 
 
 def export_documents(converted_docs: Iterable[ConvertedDocument]):
