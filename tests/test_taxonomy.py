@@ -54,6 +54,7 @@ class TestTaxonomy:
     )
     def test_read_taxonomy_leaf_nodes(
         self,
+        tmp_path,
         taxonomy_base,
         create_tracked_file,
         create_untracked_file,
@@ -71,7 +72,7 @@ class TestTaxonomy:
             self.taxonomy.create_untracked(untracked_file, test_compositional_skill)
 
         leaf_nodes = taxonomy.read_taxonomy_leaf_nodes(
-            self.taxonomy.root, taxonomy_base, None
+            self.taxonomy.root, taxonomy_base, None, tmp_path
         )
         assert len(leaf_nodes) == len(check_leaf_node_keys)
 
