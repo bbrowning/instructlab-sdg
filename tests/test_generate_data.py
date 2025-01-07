@@ -21,7 +21,12 @@ import yaml
 
 # First Party
 from instructlab.sdg import LLMBlock, PipelineContext
-from instructlab.sdg.generate_data import _context_init, _sdg_init, generate_data
+from instructlab.sdg.generate_data import (
+    _context_init,
+    _locate_docling_models,
+    _sdg_init,
+    generate_data,
+)
 
 TEST_SYS_PROMPT = "I am, Red Hat® Instruct Model based on Granite 7B, an AI language model developed by Red Hat and IBM Research, based on the Granite-7b-base language model. My primary function is to be a chat assistant."
 
@@ -562,3 +567,17 @@ def test_context_init_batch_size_optional():
         batch_num_workers=32,
     )
     assert ctx.batch_size == 20
+
+
+def test_locate_docling_models_config_found(testdata_path):
+    with patch.dict(os.environ):
+        os.environ["XDG_DATA_HOME"] = str(testdata_path.joinpath("mock_xdg_data_dir"))
+        docling_model_path = _locate_docling_models()
+        assert docling_model_path == "/mock/docling-models"
+
+
+def test_locate_docling_models_config_not_found(testdata_path):
+    with patch.dict(os.environ):
+        os.environ["XDG_DATA_HOME"] = str(testdata_path.joinpath("nonexistent_dir"))
+        docling_model_path = _locate_docling_models()
+        assert docling_model_path is None

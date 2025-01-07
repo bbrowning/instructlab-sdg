@@ -2,15 +2,14 @@
 
 # Standard
 from typing import Any, Dict, Union
-from unittest.mock import patch
 import os
+import pathlib
 
 # Third Party
 import pytest
 import yaml
 
 # First Party
-from instructlab.sdg.taxonomy import _locate_docling_models
 from instructlab.sdg.utils import taxonomy
 
 TEST_SEED_EXAMPLE = "Can you help me debug this failing unit test?"
@@ -23,7 +22,7 @@ def load_test_skills(skills_file_path) -> Union[Dict[str, Any], None]:
         return yaml.safe_load(skills_file)
 
 
-class TestUtilsTaxonomy:
+class TestTaxonomy:
     """Test taxonomy in instructlab.sdg.utils.taxonomy."""
 
     @pytest.fixture(autouse=True)
@@ -86,17 +85,3 @@ class TestUtilsTaxonomy:
             ):
                 seed_example_exists = True
             assert seed_example_exists is True
-
-
-def test_locate_docling_models_config_found(testdata_path):
-    with patch.dict(os.environ):
-        os.environ["XDG_DATA_HOME"] = str(testdata_path.joinpath("mock_xdg_data_dir"))
-        docling_model_path = _locate_docling_models()
-        assert docling_model_path == "/mock/docling-models"
-
-
-def test_locate_docling_models_config_not_found(testdata_path):
-    with patch.dict(os.environ):
-        os.environ["XDG_DATA_HOME"] = str(testdata_path.joinpath("nonexistent_dir"))
-        docling_model_path = _locate_docling_models()
-        assert docling_model_path is None
